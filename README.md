@@ -42,9 +42,13 @@ root/
 ├── node_modules
 ├── sources
 ├── upload/
-│   └── product/
-│       ├── banh-bong-lan-chanh-day.jpeg
-│       ├── banh-chuoi-nuong.jpeg
+│   ├── product/
+│   │   ├── banh-cuon.jpg
+│   │   ├── banh-uot.jpg
+│   │   └── ...
+│   ├── category/
+│   │   └── ...
+│   └── avatar/
 │       └── ...
 └── ...
 ```
