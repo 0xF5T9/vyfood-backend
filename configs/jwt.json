@@ -1,0 +1,4 @@
+{
+    "jwtRefreshTokenDuration": "1 year",
+    "jwtAccessTokenDuration": "15 minutes"
+}

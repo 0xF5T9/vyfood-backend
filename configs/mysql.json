@@ -1,0 +1,17 @@
+{
+    "poolOptions": {
+        "host": "localhost",
+        "user": "root",
+        "password": "",
+        "database": "",
+        "connectTimeout": 60000,
+        "waitForConnections": true,
+        "connectionLimit": 100,
+        "maxIdle": 100,
+        "idleTimeout": 60000,
+        "queueLimit": 0,
+        "enableKeepAlive": true,
+        "keepAliveInitialDelay": 10000
+    },
+    "defaultPagination": 10
+}
