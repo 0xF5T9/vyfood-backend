@@ -232,16 +232,19 @@ Output:
 - API Server: `https://api.mydomain.com`
 - Upload: `https://upload.mydomain.com`
 
-### 4. Update project configuration files
-
-Update the project configuration files in `./configs` folder.
-
-### 5. Set environment variables
-
-Set `NODE_ENV` to `development` or `production`
+### 4. Set environment variables
 
 ```shell
 NODE_ENV=development
+CORS_ORIGIN=https://mydomain.com http://localhost:8080
+NODEMAILER_USER=yourgmail@gmail.com
+NODEMAILER_APP_PASSWORD=your-google-app-password
+NODEMAILER_DOMAIN=https://mydomain.com
+DATABASE_HOST=
+DATABASE_USER=
+DATABASE_PASSWORD=
+DATABASE_NAME=
+PORT=1284
 ```
 
 ## Usage

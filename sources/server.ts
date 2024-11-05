@@ -18,8 +18,6 @@ import cookieParser from 'cookie-parser';
 
 import routers from '@sources/routers';
 import { initialize as mysqlInitialize } from '@sources/services/database';
-import expressConfig from '@root/configs/express.json';
-import corsConfig from '@root/configs/cors.json';
 import pathGlobal from '@sources/global/path';
 
 pathGlobal.root = path.join(__dirname, '..');
@@ -32,6 +30,43 @@ console.log(
     pathGlobal.upload,
     '\n'
 );
+
+// Validate environment variables.
+const environmentVariables = {
+    NODE_ENV: process.env.NODE_ENV,
+    CORS_ORIGIN: process.env.CORS_ORIGIN,
+    NODEMAILER_USER: process.env.NODEMAILER_USER,
+    NODEMAILER_APP_PASSWORD: process.env.NODEMAILER_APP_PASSWORD,
+    NODEMAILER_DOMAIN: process.env.NODEMAILER_DOMAIN,
+    DATABASE_HOST: process.env.DATABASE_HOST,
+    DATABASE_USER: process.env.DATABASE_USER,
+    DATABASE_PASSWORD: process.env.DATABASE_PASSWORD,
+    DATABASE_NAME: process.env.DATABASE_NAME,
+    PORT: process.env.PORT,
+};
+let isConfigurationInvalid = false;
+for (const variable in environmentVariables) {
+    let value =
+        environmentVariables[variable as keyof typeof environmentVariables];
+    if (!value) {
+        console.error(` ENV Variable '${variable}' is undefined.`);
+        isConfigurationInvalid = true;
+    }
+    if (
+        variable === 'NODE_ENV' &&
+        value !== 'development' &&
+        value !== 'production'
+    ) {
+        console.error(
+            `NODE_ENV not set correctly. Expected 'development' or 'production'.`
+        );
+        isConfigurationInvalid = true;
+    }
+}
+if (isConfigurationInvalid)
+    throw new Error(
+        `Misconfiguration detected. Please check if the environment variables are set correctly.`
+    );
 
 const app = express();
 
@@ -50,7 +85,12 @@ const globalLimiter = rateLimit({
 app.use(globalLimiter);
 
 // Allow cookies and set origin.
-app.use(cors({ credentials: true, origin: corsConfig.origin }));
+app.use(
+    cors({
+        credentials: true,
+        origin: environmentVariables.CORS_ORIGIN.split(' '),
+    })
+);
 
 // Other middlewares.
 app.use(express.json());
@@ -80,44 +120,14 @@ const errorHandler: ErrorRequestHandler = function (
 app.use(errorHandler);
 
 // Launch server.
-app.listen(expressConfig.port, () => {
-    console.log(
-        `Loaded environment variables:\n• NODE_ENV: ${process?.env?.NODE_ENV}\n`
-    );
-
+app.listen(environmentVariables.PORT, () => {
+    let environmentVariablesLog = 'Loaded environment variables:\n';
+    for (const variable in environmentVariables) {
+        environmentVariablesLog += `• ${variable}: ${environmentVariables[variable as keyof typeof environmentVariables]}\n`;
+    }
+    console.log(environmentVariablesLog);
     const isProductionMode = process?.env?.NODE_ENV === 'production';
-    if (isProductionMode) {
-        console.log('Application started in production mode:');
-    } else {
-        console.log('Application started in development mode:');
-    }
-
-    const { networkInterfaces } = require('os');
-
-    const nets = networkInterfaces(),
-        results = Object.create(null);
-
-    for (const name of Object.keys(nets)) {
-        for (const net of nets[name]) {
-            const familyV4Value = typeof net.family === 'string' ? 'IPv4' : 4;
-            if (net.family === familyV4Value && !net.internal) {
-                if (!results[name]) {
-                    results[name] = [];
-                }
-                results[name].push(net.address);
-            }
-        }
-    }
-
     console.log(
-        `• localhost: http://localhost:${expressConfig.port}\n• IPv4: http://${results?.Ethernet[0]}:${expressConfig.port}\n`
+        `Application started in ${isProductionMode ? 'production' : 'development'} mode at port ${environmentVariables.PORT}.`
     );
-
-    if (
-        process?.env?.NODE_ENV !== 'production' &&
-        process?.env?.NODE_ENV !== 'development'
-    )
-        console.warn(
-            `NODE_ENV not set correctly. Expected 'development' or 'production'.`
-        );
 });

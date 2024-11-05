@@ -10,7 +10,6 @@ import bcrypt from 'bcrypt';
 
 import { query } from '@sources/services/database';
 import { ModelError, ModelResponse } from '@sources/utility/model';
-import nodemailerConfig from '@root/configs/nodemailer.json';
 
 /**
  * Hash password using bcrypt.
@@ -95,15 +94,22 @@ async function forgotPassword(email: string) {
                 }
             );
 
-        const transporter = nodemailer.createTransport(
-            nodemailerConfig.transporterOptions
-        );
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            host: 'smtp.google.com',
+            port: 465,
+            secure: true,
+            auth: {
+                user: process.env.NODEMAILER_USER,
+                pass: process.env.NODEMAILER_APP_PASSWORD,
+            },
+        });
 
         await transporter.sendMail({
-            from: nodemailerConfig.resetPasswordSendMailOptions.from,
+            from: `no-reply <${process.env.NODEMAILER_USER}>`,
             to: email,
-            subject: nodemailerConfig.resetPasswordSendMailOptions.subject,
-            html: `<a href="${nodemailerConfig.resetPasswordSendMailOptions.domain}/reset-password?token=${resetToken}">Nhấn vào liên kết này để khôi phục tài khoản của bạn</a>`,
+            subject: 'Update Email Address',
+            html: `<a href="${process.env.NODEMAILER_DOMAIN}/reset-password?token=${resetToken}">Nhấn vào liên kết này để khôi phục tài khoản của bạn</a>`,
         });
 
         return new ModelResponse(

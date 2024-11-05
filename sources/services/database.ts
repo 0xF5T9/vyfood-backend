@@ -5,14 +5,26 @@
 
 'use strict';
 import mysql from 'mysql2/promise';
-import mysqlConfig from '@root/configs/mysql.json';
 import mysqlGlobal from '@sources/global/mysql';
 
 /**
  * Initialize mysql server.
  */
 async function initialize() {
-    mysqlGlobal.pool = await mysql.createPool(mysqlConfig.poolOptions);
+    mysqlGlobal.pool = await mysql.createPool({
+        host: process.env.DATABASE_HOST,
+        user: process.env.DATABASE_USER,
+        password: process.env.DATABASE_PASSWORD,
+        database: process.env.DATABASE_NAME,
+        connectTimeout: 60000,
+        waitForConnections: true,
+        connectionLimit: 100,
+        maxIdle: 100,
+        idleTimeout: 60000,
+        queueLimit: 0,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 10000,
+    });
 }
 
 /**
