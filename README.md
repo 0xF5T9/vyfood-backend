@@ -234,7 +234,7 @@ Output:
 
 ### 4. Set environment variables
 
-```shell
+```bash
 NODE_ENV=development
 CORS_ORIGIN=https://mydomain.com http://localhost:8080
 NODEMAILER_USER=yourgmail@gmail.com
