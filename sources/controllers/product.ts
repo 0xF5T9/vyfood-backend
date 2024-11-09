@@ -51,6 +51,7 @@ class ProductController {
                 categoriesArray = fields?.categories || null,
                 descArray = fields?.desc || null,
                 priceArray = fields?.price || null,
+                quantityArray = fields?.quantity || null,
                 priorityArray = fields?.priority || null,
                 imageArray = files?.image || null,
                 name = nameArray?.length ? nameArray[0] : null,
@@ -59,6 +60,7 @@ class ProductController {
                     : null,
                 desc = descArray?.length ? descArray[0] : null,
                 price = priceArray?.length ? priceArray[0] : null,
+                quantity = quantityArray?.length ? quantityArray[0] : null,
                 priority = priorityArray?.length ? priorityArray[0] : null,
                 image = imageArray?.length ? imageArray[0] : null;
 
@@ -67,6 +69,7 @@ class ProductController {
                 categories,
                 desc,
                 parseInt(`${price}`?.replace(/\D/g, '')),
+                parseInt(`${quantity}`?.replace(/\D/g, '')),
                 parseInt(`${priority}`?.replace(/\D/g, '')),
                 image
             );
@@ -96,14 +99,16 @@ class ProductController {
 
     // [PUT] /product
     updateProduct: RequestHandler = async (request, response, next) => {
-        const { slug, name, categories, desc, price, priority } = request.body;
+        const { slug, name, categories, desc, price, quantity, priority } =
+            request.body;
 
         const updateProductResult = await model.updateProduct(
             slug,
             name,
             categories,
             desc,
-            price,
+            parseInt(`${price}`?.replace(/\D/g, '')),
+            parseInt(`${quantity}`?.replace(/\D/g, '')),
             parseInt(`${priority}`?.replace(/\D/g, ''))
         );
         if (!updateProductResult.success)

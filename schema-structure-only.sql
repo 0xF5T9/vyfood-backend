@@ -5,13 +5,13 @@
  Source Server Type    : MySQL
  Source Server Version : 80402 (8.4.2)
  Source Host           : localhost:3306
- Source Schema         : devtest3
+ Source Schema         : devtest
 
  Target Server Type    : MySQL
  Target Server Version : 80402 (8.4.2)
  File Encoding         : 65001
 
- Date: 29/10/2024 18:38:30
+ Date: 09/11/2024 18:42:56
 */
 
 SET NAMES utf8mb4;
@@ -78,10 +78,11 @@ CREATE TABLE `products`  (
   `desc` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL,
   `price` int NOT NULL DEFAULT 0,
   `imageFileName` varchar(2000) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
+  `quantity` int NOT NULL DEFAULT 0,
   `priority` int NOT NULL DEFAULT 1,
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `slug`(`slug` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 20 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
+) ENGINE = InnoDB AUTO_INCREMENT = 25 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for users

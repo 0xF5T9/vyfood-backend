@@ -84,52 +84,14 @@ We need to set 2 proxies:
 
 2. Upload: `localhost:1234` --> `/upload`
 
-`nginx.conf`
-
-```plain
-worker_processes  1;
-
-events {
-    worker_connections  1024;
-}
-
-http {
-    include       mime.types;
-    default_type  application/octet-stream;
-    sendfile        on;
-    keepalive_timeout  65;
-    client_max_body_size 100M;
-
-    include       mylocal.conf;
-}
-```
-
 `mylocal.conf`
 
 ```plain
 server {
     listen 1234;
     server_name localhost;
+    client_max_body_size 100M;
     root path/to/backend/project/upload;
-
-    location / {
-       autoindex on;
-    }
-
-    location /avatar {
-       proxy_cache off;
-       autoindex on;
-    }
-
-    location /product {
-       proxy_cache off;
-       autoindex on;
-    }
-
-    location /category {
-       proxy_cache off;
-       autoindex on;
-    }
 }
 ```
 
@@ -147,38 +109,20 @@ Limitation workaround: Use a real domain with SSL for api server proxy.
 1. API Server: `api.mydomain.com` --> `localhost:1284`
 2. Upload: `upload.mydomain.com` --> `/upload`
 
-`nginx.conf`
-
-```plain
-worker_processes  1;
-
-events {
-    worker_connections  1024;
-}
-
-http {
-    include       mime.types;
-    default_type  application/octet-stream;
-    sendfile        on;
-    keepalive_timeout  65;
-    client_max_body_size 100M;
-
-    include       mydomain.com.conf;
-}
-```
-
 `mydomain.com.conf`
 
 ```plain
 server {
     listen 80;
     server_name api.mydomain.com;
+    client_max_body_size 100M;
     return 301 https://api.mydomain.com$request_uri;
 }
 
 server {
     listen 443 ssl;
     server_name api.mydomain.com;
+    client_max_body_size 100M;
     ssl_certificate path/to/ssl/cert.pem;
     ssl_certificate_key path/to/ssl/cert-key.pem;
 
@@ -196,34 +140,17 @@ server {
 server {
     listen 80;
     server_name upload.mydomain.com;
+    client_max_body_size 100M;
     return 301 https://upload.mydomain.com$request_uri;
 }
 
 server {
     listen 443 ssl;
     server_name upload.mydomain.com;
+    client_max_body_size 100M;
     root path/to/backend/project/upload;
     ssl_certificate path/to/ssl/cert.pem;
     ssl_certificate_key path/to/ssl/cert-key.pem;
-
-    location / {
-       autoindex on;
-    }
-
-    location /avatar {
-       proxy_cache off;
-       autoindex on;
-    }
-
-    location /product {
-       proxy_cache off;
-       autoindex on;
-    }
-
-    location /category  {
-       proxy_cache off;
-       autoindex on;
-    }
 }
 ```
 

@@ -29,7 +29,7 @@ async function getProducts(page: number = 1, itemPerPage: number = 12) {
         const offset = getOffset(page, itemPerPage);
 
         const itemsQueryResult = await query(
-                `SELECT slug, \`name\`, category, \`desc\`, price, imageFileName, priority FROM products LIMIT ?, ?`,
+                `SELECT slug, \`name\`, category, \`desc\`, price, imageFileName, quantity, priority FROM products LIMIT ?, ?`,
                 [`${offset}`, `${itemPerPage}`]
             ),
             products = itemsQueryResult || [];
@@ -79,6 +79,7 @@ async function getProducts(page: number = 1, itemPerPage: number = 12) {
  * @param categories Product categories.
  * @param desc Product description.
  * @param price Product price.
+ * @param quantity Product quantity.
  * @param priority Product priority.
  * @param image Product image.
  * @returns Returns the response object.
@@ -88,17 +89,24 @@ async function createProduct(
     categories: string,
     desc: string,
     price: number,
+    quantity: number,
     priority: number,
     image?: formidable.File
 ) {
     try {
-        if (!name || (!price && price !== 0) || (!priority && priority !== 0))
+        if (
+            !name ||
+            (!price && price !== 0) ||
+            (!quantity && quantity !== 0) ||
+            (!priority && priority !== 0)
+        )
             throw new ModelError(
-                `Thông tin 'name', 'price', 'priority' bị thiếu.`,
+                `Thông tin 'name', 'price', 'quantity', 'priority' bị thiếu.`,
                 false,
                 400
             );
 
+        quantity = Math.max(0, Math.min(quantity, 2147483647));
         priority = Math.max(0, Math.min(priority, 2147483647));
         price = Math.max(0, Math.min(price, 2147483647));
 
@@ -219,7 +227,7 @@ async function createProduct(
             const imageFileName = path.parse(outputFilePath).base;
             try {
                 const insertResult: any = await query(
-                    `INSERT INTO products (\`slug\`, \`name\`, \`category\`, \`desc\`, \`price\`, \`imageFileName\`, \`priority\`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    `INSERT INTO products (\`slug\`, \`name\`, \`category\`, \`desc\`, \`price\`, \`imageFileName\`, \`quantity\`, \`priority\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         newSlug,
                         name,
@@ -227,6 +235,7 @@ async function createProduct(
                         desc,
                         `${price}`,
                         imageFileName,
+                        `${quantity}`,
                         `${priority}`,
                     ]
                 );
@@ -253,13 +262,14 @@ async function createProduct(
             }
         } else {
             const insertResult: any = await query(
-                `INSERT INTO products (\`slug\`, \`name\`, \`category\`, \`desc\`, \`price\`, \`priority\`) VALUES (?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO products (\`slug\`, \`name\`, \`category\`, \`desc\`, \`price\`, \`quantity\`, \`priority\`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
                 [
                     newSlug,
                     name,
                     insertCategories,
                     desc,
                     `${price}`,
+                    `${quantity}`,
                     `${priority}`,
                 ]
             );
@@ -293,6 +303,7 @@ async function createProduct(
  * @param categories Product categories.
  * @param desc Product description.
  * @param price Product price.
+ * @param quantity Product quantity.
  * @param priority Product priority.
  * @returns Returns the response object.
  */
@@ -302,6 +313,7 @@ async function updateProduct(
     categories: string,
     desc: string,
     price: number,
+    quantity: number,
     priority: number
 ) {
     try {
@@ -319,6 +331,8 @@ async function updateProduct(
 
         priority = Math.max(0, Math.min(priority, 2147483647));
         price = Math.max(0, Math.min(price, 2147483647));
+        if (quantity || quantity === 0)
+            quantity = Math.max(0, Math.min(quantity, 2147483647));
 
         let transformedCategories: string[];
         if (categories) {
@@ -364,17 +378,27 @@ async function updateProduct(
             attempt++;
         }
 
-        const updateResult: any = await query(
-            `UPDATE products SET \`slug\` = ?, \`name\` = ?, \`category\` = ?, \`desc\` = ?, \`price\` = ?, \`priority\` = ? WHERE BINARY slug = ?`,
-            [
+        let columns = ['slug', 'name', 'category', 'desc', 'price', 'priority'],
+            params = [
                 newSlug,
                 name,
                 insertCategories,
                 desc,
                 `${price}`,
                 `${priority}`,
-                slug,
-            ]
+            ];
+        if (quantity || quantity === 0) {
+            columns.push('quantity');
+            params.push(`${quantity}`);
+        }
+
+        const setSQL = columns
+            .map((property) => `\`${property}\` = ?`)
+            .join(', ');
+
+        const updateResult: any = await query(
+            `UPDATE products SET ${setSQL} WHERE BINARY slug = ?`,
+            [...params, slug]
         );
         if (!updateResult.affectedRows)
             throw new ModelError(
