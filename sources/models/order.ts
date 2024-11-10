@@ -224,7 +224,13 @@ async function createOrder(
  */
 async function updateOrder(
     orderId: number,
-    status?: 'processing' | 'completed' | 'aborted'
+    status?:
+        | 'processing'
+        | 'shipping'
+        | 'completed'
+        | 'refunding'
+        | 'aborted'
+        | 'refunded'
 ) {
     try {
         if (!orderId)
@@ -233,8 +239,11 @@ async function updateOrder(
         if (status) {
             if (
                 status !== 'processing' &&
+                status !== 'shipping' &&
                 status !== 'completed' &&
-                status !== 'aborted'
+                status !== 'refunding' &&
+                status !== 'aborted' &&
+                status !== 'refunded'
             )
                 throw new ModelError(
                     'Trạng thái đơn hàng không hợp lệ',
