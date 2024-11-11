@@ -20,6 +20,7 @@ type Product = {
     desc: string;
     price: number;
     imageFileName: string;
+    quantity: number;
     priority: number;
 };
 
@@ -141,13 +142,46 @@ async function createOrder(
             const sqlCondition = items?.map(() => `slug = ?`).join(' OR '),
                 params = items?.map((item) => item?.product?.slug);
             const [getProductsResult] = (await connection.execute(
-                `SELECT \`slug\`, \`price\` FROM \`products\` WHERE ${sqlCondition}`,
+                `SELECT \`slug\`, \`price\`, \`quantity\` FROM \`products\` WHERE ${sqlCondition}`,
                 params
             )) as Array<Array<any>>;
             const mappedProducts = getProductsResult?.reduce((acc, product) => {
                 acc[product?.slug] = product;
                 return acc;
             }, {});
+
+            for (let i = 0; i < items.length; i++) {
+                const [currentQuantityResult] = (await connection.execute(
+                    `SELECT \`quantity\` FROM \`products\` WHERE BINARY \`slug\` = ?`,
+                    [items[i].product.slug]
+                )) as Array<any>;
+                if (!currentQuantityResult.length)
+                    throw new ModelError(
+                        'Thông tin đơn hàng cần được cập nhật mới.',
+                        false,
+                        409
+                    );
+
+                const currentQuantity = currentQuantityResult[0].quantity,
+                    newQuantity = currentQuantity - items[i].totalItems;
+                if (newQuantity < 0)
+                    throw new ModelError(
+                        'Thông tin đơn hàng cần được cập nhật mới.',
+                        false,
+                        409
+                    );
+                const [updateItemQuantity] = (await connection.execute(
+                    `UPDATE \`products\` SET \`quantity\` = ? WHERE BINARY slug = ?`,
+                    [`${newQuantity}`, items[i].product.slug]
+                )) as Array<any>;
+                if (!updateItemQuantity.affectedRows)
+                    throw new ModelError(
+                        'Cập nhật số lượng hàng thất bại (products).',
+                        true,
+                        500
+                    );
+            }
+
             items?.every((item) => {
                 if (
                     !mappedProducts[item?.product?.slug] || // The product no longer exist.
