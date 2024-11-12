@@ -374,4 +374,99 @@ async function deleteOrder(orderId: number) {
     }
 }
 
-export default { getOrders, createOrder, updateOrder, deleteOrder };
+/**
+ * Restore product quantities of the order.
+ * @param orderId Order id.
+ * @returns Returns the response object.
+ */
+async function restoreProductQuantity(orderId: number) {
+    try {
+        if (!orderId)
+            throw new ModelError(`Thông tin 'orderId' bị thiếu.`, false, 400);
+
+        await queryTransaction(async (connection) => {
+            const [getOrderResult] = (await connection.execute(
+                `SELECT * FROM \`orders\` WHERE \`orderId\` = ?`,
+                [`${orderId}`]
+            )) as Array<Array<any>>;
+            if (!getOrderResult.length)
+                throw new ModelError(
+                    `Đơn hàng '${orderId}' không tồn tại.`,
+                    false,
+                    400
+                );
+            let order = getOrderResult[0] as {
+                id: number;
+                orderId: number;
+                deliveryMethod: 'pickup' | 'pickup';
+                deliveryAddress: string;
+                deliveryTime: Date;
+                pickupAt: string;
+                deliveryNote: string;
+                customerName: string;
+                customerPhoneNumber: string;
+                items: any[];
+                status:
+                    | 'processing'
+                    | 'shipping'
+                    | 'completed'
+                    | 'refunding'
+                    | 'aborted'
+                    | 'refunded';
+                createdAt: Date;
+            };
+
+            if (order.status !== 'aborted' && order.status !== 'refunded')
+                throw new ModelError(
+                    `Trạng thái đơn hàng phải là: Đã hoàn tiền hoặc Đã huỷ`,
+                    false,
+                    400
+                );
+
+            for (let i = 0; i < order.items.length; i++) {
+                const [getCurrentProductQuantity] = (await connection.execute(
+                    `SELECT \`quantity\` FROM \`products\` WHERE \`slug\` = ?`,
+                    [order.items[i].product.slug]
+                )) as Array<Array<any>>;
+                if (!getCurrentProductQuantity.length) continue;
+                const currentProductQuantity = getCurrentProductQuantity[0]
+                        .quantity as number,
+                    newProductQuantity: number =
+                        currentProductQuantity + order.items[i].totalItems;
+                const [updateNewProductQuantity] = (await connection.execute(
+                    `UPDATE \`products\` SET \`quantity\` = ? WHERE \`slug\` = ?`,
+                    [`${newProductQuantity}`, order.items[i].product.slug]
+                )) as Array<any>;
+                if (!updateNewProductQuantity.affectedRows)
+                    throw new ModelError(
+                        `Có lỗi xảy ra khi cập nhật số lượng sản phẩm (orders).`,
+                        true,
+                        500
+                    );
+            }
+
+            return getOrderResult;
+        });
+
+        return new ModelResponse('Thành công.', true, null);
+    } catch (error) {
+        console.error(error);
+        if (error.isServerError === undefined) error.isServerError = true;
+
+        return new ModelResponse(
+            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            false,
+            null,
+            error.isServerError,
+            error.statusCode
+        );
+    }
+}
+
+export default {
+    getOrders,
+    createOrder,
+    updateOrder,
+    deleteOrder,
+    restoreProductQuantity,
+};

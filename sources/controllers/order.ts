@@ -98,6 +98,25 @@ class OrderController {
             data: deleteOrderResult.data,
         });
     };
+
+    // [POST] /order/restore-product-quantity
+    restoreProductQuantity: RequestHandler = async (
+        request,
+        response,
+        next
+    ) => {
+        const { orderId } = request.body;
+
+        const restoreResult = await model.restoreProductQuantity(orderId);
+        if (!restoreResult.success)
+            return response
+                .status(restoreResult.statusCode)
+                .json({ message: restoreResult.message });
+
+        return response
+            .status(200)
+            .json({ message: restoreResult.message, data: restoreResult.data });
+    };
 }
 
 export default new OrderController();
