@@ -176,4 +176,12 @@ PORT=1284
 
 ## Usage
 
+```bash
+# Start server in development mode
+npm run start-nodemon
+
+# Or start server in production mode
+npm start
+```
+
 Check `package.json`, `.vscode` folder for scripts and tasks.
