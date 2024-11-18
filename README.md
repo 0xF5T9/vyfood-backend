@@ -8,6 +8,7 @@
 - node >= v20.13.1
 - MySQL >= v8.4.0
 - nginx >= 1.26.2
+- Domain with SSL
 
 ## Install
 
@@ -75,43 +76,13 @@ UPDATE users SET `role` = 'admin' WHERE username = 'your_username'
 
 We need to set 2 proxies:
 
-1. Proxy that expose API server. (For production)
+1. Proxy that expose API server.
 2. Proxy that serves uploaded files from upload folder.
 
-#### 3A. Development configuration
-
-1. API Server: We just send requests directly to `localhost:1284` so no proxy is needed.
-
-2. Upload: `localhost:1234` --> `/upload`
-
-`mylocal.conf`
+`mydomain.com.backend.conf`
 
 ```plain
-server {
-    listen 1234;
-    server_name localhost;
-    client_max_body_size 100M;
-    root path/to/backend/project/upload;
-}
-```
-
-Output:
-
-- API Server: `localhost:1284`
-- Upload: `localhost:1234`
-
-Limitation: The website will only work correctly if accessed on the same host. Use IPv4 instead of localhost will not work because we can't set secured cookies via a non-https connection (localhost is an exception)
-
-Limitation workaround: Use a real domain with SSL for api server proxy.
-
-#### 3B. Production configuration
-
-1. API Server: `api.mydomain.com` --> `localhost:1284`
-2. Upload: `upload.mydomain.com` --> `/upload`
-
-`mydomain.com.conf`
-
-```plain
+# Redirect HTTP to HTTPS. (API Server)
 server {
     listen 80;
     server_name api.mydomain.com;
@@ -119,6 +90,7 @@ server {
     return 301 https://api.mydomain.com$request_uri;
 }
 
+# Proxy pass to node api server
 server {
     listen 443 ssl;
     server_name api.mydomain.com;
@@ -137,6 +109,7 @@ server {
     }
 }
 
+# Redirect HTTP to HTTPS. (Upload)
 server {
     listen 80;
     server_name upload.mydomain.com;
@@ -144,6 +117,7 @@ server {
     return 301 https://upload.mydomain.com$request_uri;
 }
 
+# Serves static files from upload folder.
 server {
     listen 443 ssl;
     server_name upload.mydomain.com;
@@ -156,14 +130,25 @@ server {
 
 Output:
 
-- API Server: `https://api.mydomain.com`
-- Upload: `https://upload.mydomain.com`
+- API Server URL: `https://api.mydomain.com`
+- Upload URL: `https://upload.mydomain.com`
 
 ### 4. Set environment variables
 
+- `NODE_ENV` - `development` or `production`
+- `CORS_ORIGIN` - Cross origin domain(s).
+- `NODEMAILER_USER` - Google user.
+- `NODEMAILER_APP_PASSWORD` - Google user app password.
+- `NODEMAILER_DOMAIN` - Domain that will be used when sending mails.
+- `DATABASE_HOST` - MySQL host.
+- `DATABASE_USER` - MySQL user.
+- `DATABASE_PASSWORD` - MySQL password.
+- `DATABASE_NAME` - MySQL database name.
+- `PORT` - Node server port.
+
 ```bash
 NODE_ENV=development
-CORS_ORIGIN=https://mydomain.com http://localhost:8080
+CORS_ORIGIN=https://mydomain.com
 NODEMAILER_USER=yourgmail@gmail.com
 NODEMAILER_APP_PASSWORD=your-google-app-password
 NODEMAILER_DOMAIN=https://mydomain.com
@@ -177,10 +162,10 @@ PORT=1284
 ## Usage
 
 ```bash
-# Start server in development mode
+# Start server in development mode (NODE_ENV value must be 'development')
 npm run start-nodemon
 
-# Or start server in production mode
+# Or start server in production mode (NODE_ENV value must be 'production')
 npm start
 ```
 
