@@ -163,7 +163,7 @@ async function updateInfo(username: string, fields: UserUpdateFields) {
                 from: `no-reply <${process.env.NODEMAILER_USER}>`,
                 to: email,
                 subject: 'Update Email Address',
-                html: `<a href="${process.env.NODEMAILER_DOMAIN}">Nhấn vào liên kết này để cập nhật địa chỉ email của bạn</a>`,
+                html: `<a href="${process.env.NODEMAILER_DOMAIN}/update-email?token=${updateEmailToken}">Nhấn vào liên kết này để cập nhật địa chỉ email của bạn</a>`,
             });
         }
 
