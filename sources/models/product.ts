@@ -106,6 +106,16 @@ async function createProduct(
                 400
             );
 
+        if (desc) {
+            const parsedDesc = JSON.parse(desc);
+            if (
+                parsedDesc?.length === 1 &&
+                parsedDesc[0]?.children?.length &&
+                parsedDesc[0]?.children[0]?.text === ''
+            )
+                desc = '';
+        }
+
         quantity = Math.max(0, Math.min(quantity, 2147483647));
         priority = Math.max(0, Math.min(priority, 2147483647));
         price = Math.max(0, Math.min(price, 2147483647));
@@ -328,6 +338,16 @@ async function updateProduct(
                 false,
                 400
             );
+
+        if (desc) {
+            const parsedDesc = JSON.parse(desc);
+            if (
+                parsedDesc?.length === 1 &&
+                parsedDesc[0]?.children?.length &&
+                parsedDesc[0]?.children[0]?.text === ''
+            )
+                desc = '';
+        }
 
         priority = Math.max(0, Math.min(priority, 2147483647));
         price = Math.max(0, Math.min(price, 2147483647));
