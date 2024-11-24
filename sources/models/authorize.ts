@@ -10,6 +10,7 @@ import bcrypt from 'bcrypt';
 
 import { query } from '@sources/services/database';
 import { ModelError, ModelResponse } from '@sources/utility/model';
+import cookieOptions from '@sources/global/cookie-options';
 import jwtConfig from '@root/configs/jwt.json';
 
 /**
@@ -294,21 +295,14 @@ const authenticateUsername: RequestHandler = async (
         response.cookie(
             'refreshToken',
             refreshTokensResult?.data?.refreshToken,
-            {
-                httpOnly: true,
-                maxAge: 365 * 24 * 60 * 60 * 1000,
-                secure: process.env.NODE_ENV === 'production' ? true : false,
-                sameSite:
-                    process.env.NODE_ENV === 'production' ? 'strict' : false,
-            }
+            cookieOptions.authToken
         );
         request.cookies.refreshToken = refreshTokensResult?.data?.refreshToken;
-        response.cookie('accessToken', refreshTokensResult?.data?.accessToken, {
-            httpOnly: true,
-            maxAge: 365 * 24 * 60 * 60 * 1000,
-            secure: process.env.NODE_ENV === 'production' ? true : false,
-            sameSite: process.env.NODE_ENV === 'production' ? 'strict' : false,
-        });
+        response.cookie(
+            'accessToken',
+            refreshTokensResult?.data?.accessToken,
+            cookieOptions.authToken
+        );
         request.cookies.accessToken = refreshTokensResult?.data?.accessToken;
     }
     const verifiedUsername =
@@ -352,21 +346,14 @@ const authenticateAdmin: RequestHandler = async (request, response, next) => {
         response.cookie(
             'refreshToken',
             refreshTokensResult?.data?.refreshToken,
-            {
-                httpOnly: true,
-                maxAge: 365 * 24 * 60 * 60 * 1000,
-                secure: process.env.NODE_ENV === 'production' ? true : false,
-                sameSite:
-                    process.env.NODE_ENV === 'production' ? 'strict' : false,
-            }
+            cookieOptions.authToken
         );
         request.cookies.refreshToken = refreshTokensResult?.data?.refreshToken;
-        response.cookie('accessToken', refreshTokensResult?.data?.accessToken, {
-            httpOnly: true,
-            maxAge: 365 * 24 * 60 * 60 * 1000,
-            secure: process.env.NODE_ENV === 'production' ? true : false,
-            sameSite: process.env.NODE_ENV === 'production' ? 'strict' : false,
-        });
+        response.cookie(
+            'accessToken',
+            refreshTokensResult?.data?.accessToken,
+            cookieOptions.authToken
+        );
         request.cookies.accessToken = refreshTokensResult?.data?.accessToken;
     }
     const verifiedRole = result?.data?.role || result?.data?.user?.role;
