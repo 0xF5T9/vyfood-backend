@@ -5,13 +5,13 @@
  Source Server Type    : MySQL
  Source Server Version : 80402 (8.4.2)
  Source Host           : localhost:3306
- Source Schema         : devtest
+ Source Schema         : devtest1
 
  Target Server Type    : MySQL
  Target Server Version : 80402 (8.4.2)
  File Encoding         : 65001
 
- Date: 09/11/2024 18:42:56
+ Date: 02/01/2025 18:43:11
 */
 
 SET NAMES utf8mb4;
@@ -67,6 +67,19 @@ CREATE TABLE `orders`  (
 ) ENGINE = InnoDB AUTO_INCREMENT = 1 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
+-- Table structure for product_categories
+-- ----------------------------
+DROP TABLE IF EXISTS `product_categories`;
+CREATE TABLE `product_categories`  (
+  `product_slug` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `category_slug` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  PRIMARY KEY (`product_slug`, `category_slug`) USING BTREE,
+  INDEX `category_slug`(`category_slug` ASC) USING BTREE,
+  CONSTRAINT `product_categories_ibfk_1` FOREIGN KEY (`product_slug`) REFERENCES `products` (`slug`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `product_categories_ibfk_2` FOREIGN KEY (`category_slug`) REFERENCES `categories` (`slug`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+
+-- ----------------------------
 -- Table structure for products
 -- ----------------------------
 DROP TABLE IF EXISTS `products`;
@@ -74,7 +87,6 @@ CREATE TABLE `products`  (
   `id` int UNSIGNED NOT NULL AUTO_INCREMENT,
   `slug` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
   `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
-  `category` json NOT NULL,
   `desc` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL,
   `price` int NOT NULL DEFAULT 0,
   `imageFileName` varchar(2000) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,

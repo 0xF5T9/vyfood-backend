@@ -4,12 +4,17 @@
  */
 
 'use strict';
+import type {
+    ResultSetHeader,
+    RowDataPacket,
+    PoolConnection,
+} from 'mysql2/promise';
 import { Buffer } from 'buffer';
 import path from 'path';
 import fs from 'fs/promises';
 import formidable from 'formidable';
 
-import { query } from '@sources/services/database';
+import { queryTransaction } from '@sources/services/database';
 import {
     ModelError,
     ModelResponse,
@@ -17,6 +22,118 @@ import {
     toSlug,
 } from '@sources/utility/model';
 import pathGlobal from '@sources/global/path';
+
+/**
+ * Generate a new unique category slug for insertion.
+ * @param connection The mysql pool connection instance.
+ * @param categoryName The category name.
+ * @returns Returns a unique category slug ready for insertion.
+ * @note This function is meant to be called in a transaction context.
+ */
+async function generateCategorySlug(
+    connection: PoolConnection,
+    categoryName: string
+): Promise<string> {
+    let slug = toSlug(categoryName),
+        slugGenerateAttempt = 0,
+        isDuplicate = true;
+    while (isDuplicate) {
+        if (slugGenerateAttempt !== 0)
+            slug = `${toSlug(categoryName)}-${Math.floor(Math.random() * Date.now())}`;
+        if (slugGenerateAttempt === 3)
+            throw new ModelError(
+                'Có lỗi xảy ra khi cố gắng tạo slug.',
+                true,
+                500
+            );
+        const [testNewSlugResult] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM categories WHERE BINARY slug = ?`,
+            [slug]
+        );
+        isDuplicate = !!testNewSlugResult.length;
+        slugGenerateAttempt++;
+    }
+
+    return slug;
+}
+
+/**
+ * Generate category image insertion data.
+ * @param imageFile Formidable image file.
+ * @returns Returns category image insertion data or null if 'imageFile' argument is null.
+ * @note This function is meant to be called in a transaction context.
+ * @note This function does not create an image on disk.
+ */
+async function generateCategoryImageInsertData(
+    imageFile: formidable.File
+): Promise<{
+    fileName: string;
+    filePath: string;
+    fileRawData: Buffer;
+} | null> {
+    if (!imageFile) return null;
+
+    let isUploadFolderExist;
+    try {
+        isUploadFolderExist = await fs.readdir(pathGlobal.upload);
+    } catch (error) {
+        isUploadFolderExist = false;
+    }
+    if (!isUploadFolderExist) await fs.mkdir(path.join(pathGlobal.upload));
+
+    let isCategoryFolderExist;
+    try {
+        isCategoryFolderExist = await fs.readdir(
+            path.join(pathGlobal.upload, 'category')
+        );
+    } catch (error) {
+        isCategoryFolderExist = false;
+    }
+    if (!isCategoryFolderExist)
+        await fs.mkdir(path.join(path.join(pathGlobal.upload, 'category')));
+
+    const tempPath = imageFile.filepath,
+        newPath = path.join(
+            pathGlobal.upload,
+            'category',
+            imageFile.originalFilename.replace(/\s/g, '')
+        ),
+        rawData = await fs.readFile(tempPath),
+        fileName = path.parse(
+            imageFile.originalFilename.replace(/\s/g, '')
+        ).name,
+        fileExt = path.parse(imageFile.originalFilename.replace(/\s/g, '')).ext;
+
+    let isFileNameAlreadyExist: Buffer | boolean = true,
+        fileNameGenerateAttempt = 0,
+        outputFilePath = newPath;
+    while (isFileNameAlreadyExist) {
+        if (fileNameGenerateAttempt === 3)
+            throw new ModelError(
+                'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
+                true,
+                500
+            );
+
+        try {
+            isFileNameAlreadyExist = await fs.readFile(outputFilePath);
+            outputFilePath = path.join(
+                pathGlobal.upload,
+                'category',
+                `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
+            );
+        } catch (error) {
+            isFileNameAlreadyExist = null;
+        }
+        fileNameGenerateAttempt++;
+    }
+
+    return {
+        fileName: path.parse(outputFilePath).base,
+        filePath: outputFilePath,
+        fileRawData: rawData,
+    };
+}
 
 /**
  * Get categories.
@@ -28,37 +145,53 @@ async function getCategories(page: number = 1, itemPerPage: number = 99999) {
     try {
         const offset = getOffset(page, itemPerPage);
 
-        const itemsQueryResult = await query(
-                `SELECT \`slug\`, \`name\`, \`desc\`, \`imageFileName\`, \`priority\` FROM categories LIMIT ?, ?`,
-                [`${offset}`, `${itemPerPage}`]
-            ),
-            categories = itemsQueryResult || [];
+        const result = await queryTransaction<{
+            meta: {
+                page: number;
+                itemPerPage: number;
+                totalItems: any;
+                isFirstPage: boolean;
+                isLastPage: boolean;
+                prevPage: string;
+                nextPage: string;
+            };
+            categories: any;
+        }>(async (connection) => {
+            const [itemsQueryResult] = await connection.execute<
+                    RowDataPacket[]
+                >(
+                    `SELECT \`slug\`, \`name\`, \`desc\`, \`imageFileName\`, \`priority\` FROM categories LIMIT ?, ?`,
+                    [`${offset}`, `${itemPerPage}`]
+                ),
+                categories = itemsQueryResult || [];
 
-        const totalItemsQueryResult = await query(
-                `SELECT COUNT(*) AS total_items from categories`
-            ),
-            totalCategories = (totalItemsQueryResult as any[])[0].total_items;
+            const [totalItemsQueryResult] = await connection.execute<
+                    RowDataPacket[]
+                >(`SELECT COUNT(*) AS total_items from categories`),
+                totalCategories = (totalItemsQueryResult as any[])[0]
+                    .total_items;
 
-        const prevPage = Math.max(1, page - 1),
-            nextPage = Math.max(
-                1,
-                Math.min(Math.ceil(totalCategories / itemPerPage), page + 1)
-            );
+            const prevPage = Math.max(1, page - 1),
+                nextPage = Math.max(
+                    1,
+                    Math.min(Math.ceil(totalCategories / itemPerPage), page + 1)
+                );
 
-        const meta = {
-            page,
-            itemPerPage,
-            totalItems: totalCategories,
-            isFirstPage: page === 1,
-            isLastPage: page === nextPage,
-            prevPage: `/category?page=${prevPage}&itemPerPage=${itemPerPage}`,
-            nextPage: `/category?page=${nextPage}&itemPerPage=${itemPerPage}`,
-        };
-
-        return new ModelResponse('Truy xuất dữ liệu thành công.', true, {
-            meta,
-            categories: categories,
+            return {
+                meta: {
+                    page,
+                    itemPerPage,
+                    totalItems: totalCategories,
+                    isFirstPage: page === 1,
+                    isLastPage: page === nextPage,
+                    prevPage: `/category?page=${prevPage}&itemPerPage=${itemPerPage}`,
+                    nextPage: `/category?page=${nextPage}&itemPerPage=${itemPerPage}`,
+                },
+                categories: categories,
+            };
         });
+
+        return new ModelResponse('Truy xuất dữ liệu thành công.', true, result);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
@@ -79,21 +212,29 @@ async function getCategories(page: number = 1, itemPerPage: number = 99999) {
  */
 async function getCategoriesCount() {
     try {
-        const categoriesResult = (await query(
-            `SELECT \`slug\` FROM \`categories\``
-        )) as Array<{ slug: string }>;
+        const transformedCategories = await queryTransaction<
+            {
+                slug: string;
+                count: number;
+            }[]
+        >(async (connection) => {
+            const [getCategorySlugsResult] = await connection.execute<
+                Array<RowDataPacket & { slug: string }>
+            >(`SELECT \`slug\` FROM \`categories\``);
 
-        let categories = categoriesResult,
-            promisesCategories = categories?.map(async (category) => {
-                const result = (await query(
-                    `SELECT COUNT(*) AS 'count' FROM \`products\` WHERE JSON_UNQUOTE(JSON_SEARCH( \`category\`, 'one', ? )) IS NOT NULL`,
-                    [category?.slug]
-                )) as any[];
+            return await Promise.all(
+                getCategorySlugsResult?.map(async (category) => {
+                    const [result] = await connection.execute<
+                        Array<RowDataPacket & { slug: string; count: number }>
+                    >(
+                        `SELECT COUNT(*) AS 'count' FROM \`product_categories\` WHERE category_slug = ?`,
+                        [category?.slug]
+                    );
 
-                return { ...category, count: result[0]?.count as string };
-            });
-
-        const transformedCategories = await Promise.all(promisesCategories);
+                    return { ...category, count: result[0]?.count };
+                })
+            );
+        });
 
         return new ModelResponse(
             'Truy xuất dữ liệu thành công.',
@@ -136,139 +277,45 @@ async function createCategory(
                 400
             );
 
+        if (image && !image?.mimetype?.includes('image'))
+            throw new ModelError(
+                'Định dạng tệp không phải là hình ảnh.',
+                false,
+                400
+            );
+
         priority = Math.max(0, Math.min(priority, 999999));
 
-        let newSlug = toSlug(name),
-            slugGenerateAttempt = 0,
-            isDuplicate = true;
-        while (isDuplicate) {
-            if (slugGenerateAttempt !== 0)
-                newSlug = `${toSlug(name)}-${Math.floor(Math.random() * Date.now())}`;
-            if (slugGenerateAttempt === 3)
-                throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng tạo slug.',
-                    true,
-                    500
-                );
-            let testNewSlugResult = (await query(
-                `SELECT id FROM categories WHERE BINARY slug = ?`,
-                [newSlug]
-            )) as unknown as any[];
-            isDuplicate = !!testNewSlugResult.length;
-            slugGenerateAttempt++;
-        }
+        await queryTransaction<void>(async (connection) => {
+            const categorySlug = await generateCategorySlug(connection, name),
+                imageInsertData = await generateCategoryImageInsertData(image);
 
-        if (image) {
-            if (image && !image?.mimetype?.includes('image'))
-                throw new ModelError(
-                    'Định dạng tệp không phải là hình ảnh.',
-                    false,
-                    400
-                );
-
-            let isUploadFolderExist;
-            try {
-                isUploadFolderExist = await fs.readdir(pathGlobal.upload);
-            } catch (error) {
-                isUploadFolderExist = false;
-            }
-            if (!isUploadFolderExist)
-                await fs.mkdir(path.join(pathGlobal.upload));
-
-            let isCategoryFolderExist;
-            try {
-                isCategoryFolderExist = await fs.readdir(
-                    path.join(pathGlobal.upload, 'category')
-                );
-            } catch (error) {
-                isCategoryFolderExist = false;
-            }
-            if (!isCategoryFolderExist)
-                await fs.mkdir(
-                    path.join(path.join(pathGlobal.upload, 'category'))
-                );
-
-            const tempPath = image.filepath,
-                newPath = path.join(
-                    pathGlobal.upload,
-                    'category',
-                    image.originalFilename.replace(/\s/g, '')
-                ),
-                rawData = await fs.readFile(tempPath),
-                fileName = path.parse(
-                    image.originalFilename.replace(/\s/g, '')
-                ).name,
-                fileExt = path.parse(
-                    image.originalFilename.replace(/\s/g, '')
-                ).ext;
-
-            let isFileNameAlreadyExist: Buffer | boolean = true,
-                fileNameGenerateAttempt = 0,
-                outputFilePath = newPath;
-            while (isFileNameAlreadyExist) {
-                if (fileNameGenerateAttempt === 3)
-                    throw new ModelError(
-                        'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                        true,
-                        500
-                    );
-
-                try {
-                    isFileNameAlreadyExist = await fs.readFile(outputFilePath);
-                    outputFilePath = path.join(
-                        pathGlobal.upload,
-                        'category',
-                        `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
-                    );
-                } catch (error) {
-                    isFileNameAlreadyExist = null;
-                }
-                fileNameGenerateAttempt++;
-            }
-
-            await fs.writeFile(outputFilePath, rawData);
-
-            const imageFileName = path.parse(outputFilePath).base;
-            try {
-                const insertResult: any = await query(
+            const [insertCategoryResult] =
+                await connection.execute<ResultSetHeader>(
                     `INSERT INTO categories (\`slug\`, \`name\`, \`desc\`, \`imageFileName\`, \`priority\`) VALUES (?, ?, ?, ?, ?)`,
-                    [newSlug, name, desc, imageFileName, `${priority}`]
+                    [
+                        categorySlug,
+                        name,
+                        desc,
+                        imageInsertData?.fileName || null,
+                        `${priority}`,
+                    ]
                 );
-                if (!insertResult.affectedRows)
-                    throw new ModelError(
-                        'Cập nhật danh mục vào cơ sở dữ liệu thất bại (categories).',
-                        true,
-                        500
-                    );
-
-                return new ModelResponse(
-                    'Tạo danh mục thành công.',
-                    true,
-                    null
-                );
-            } catch (error) {
-                await fs.unlink(path.join(outputFilePath));
-
-                throw new ModelError(
-                    'Cập nhật danh mục vào cơ sở dữ liệu thất bại (categories).',
-                    true,
-                    500
-                );
-            }
-        } else {
-            const insertResult: any = await query(
-                `INSERT INTO categories (\`slug\`, \`name\`, \`desc\`, \`priority\`) VALUES (?, ?, ?, ?)`,
-                [newSlug, name, desc, `${priority}`]
-            );
-            if (!insertResult.affectedRows)
+            if (!insertCategoryResult.affectedRows)
                 throw new ModelError(
                     'Cập nhật danh mục vào cơ sở dữ liệu thất bại (categories).',
                     true,
                     500
                 );
 
-            return new ModelResponse('Tạo danh mục thành công.', true, null);
-        }
+            if (imageInsertData)
+                await fs.writeFile(
+                    imageInsertData.filePath,
+                    imageInsertData.fileRawData
+                );
+        });
+
+        return new ModelResponse('Tạo danh mục thành công.', true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
@@ -307,41 +354,21 @@ async function updateCategory(
 
         priority = Math.max(0, Math.min(priority, 999999));
 
-        let newSlug = toSlug(name),
-            attempt = 0,
-            isDuplicate = true;
-        while (isDuplicate && newSlug !== slug) {
-            if (attempt !== 0)
-                newSlug = `${toSlug(name)}-${Math.floor(Math.random() * Date.now())}`;
-            if (attempt === 3)
-                throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng tạo slug.',
-                    true,
-                    500
+        await queryTransaction<void>(async (connection) => {
+            const categorySlug = await generateCategorySlug(connection, name);
+
+            const [updateCategoryResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE categories SET \`slug\` = ?, \`name\` = ?, \`desc\` = ?, \`priority\` = ? WHERE BINARY slug = ?`,
+                    [categorySlug, name, desc, `${priority}`, slug]
                 );
-            let testNewSlugResult = (await query(
-                `SELECT id FROM categories WHERE BINARY slug = ?`,
-                [newSlug]
-            )) as unknown as any[];
-            isDuplicate = !!testNewSlugResult.length;
-            attempt++;
-        }
-
-        const updateResult: any = await query(
-            `UPDATE categories SET \`slug\` = ?, \`name\` = ?, \`desc\` = ?, \`priority\` = ? WHERE BINARY slug = ?`,
-            [newSlug, name, desc, `${priority}`, slug]
-        );
-        if (!updateResult.affectedRows)
-            throw new ModelError(
-                `Không tìm thấy danh mục '${slug}'.`,
-                false,
-                400
-            );
-
-        await query(
-            `UPDATE \`products\` SET \`category\` = JSON_SET( \`category\`, JSON_UNQUOTE( JSON_SEARCH( \`category\`, 'one', ? )), ? ) WHERE JSON_UNQUOTE( JSON_SEARCH( \`category\`, 'one', ? )) IS NOT NULL`,
-            [slug, newSlug, slug]
-        );
+            if (!updateCategoryResult.affectedRows)
+                throw new ModelError(
+                    `Không tìm thấy danh mục '${slug}'.`,
+                    false,
+                    400
+                );
+        });
 
         return new ModelResponse('Cập nhật danh mục thành công.', true, null);
     } catch (error) {
@@ -368,49 +395,41 @@ async function deleteCategory(slug: string) {
         if (!slug)
             throw new ModelError(`Thông tin 'slug' bị thiếu.`, false, 400);
 
-        const getCategoryImageResult: any = await query(
-            `SELECT imageFileName FROM categories WHERE BINARY slug = ?`,
-            [slug]
-        );
-        if (!getCategoryImageResult.length)
-            throw new ModelError(
-                `Không tìm thấy danh mục '${slug}'.`,
-                false,
-                400
-            );
-
-        await query(
-            `UPDATE \`products\` SET \`category\` = JSON_REMOVE(\`category\`, JSON_UNQUOTE(JSON_SEARCH( \`category\`, 'one', ? ))) WHERE JSON_UNQUOTE(JSON_SEARCH( \`category\`, 'one', ? )) IS NOT NULL`,
-            [slug, slug]
-        );
-
-        const associatedImage =
-                getCategoryImageResult[0].imageFileName?.match(/[^\/]+$/)[0],
-            associatedImagePath = associatedImage
-                ? path.join(pathGlobal.upload, 'category', associatedImage)
-                : null;
-
-        const deleteCategoryResult: any = await query(
-            `DELETE FROM categories WHERE BINARY slug = ?`,
-            [slug]
-        );
-        if (!deleteCategoryResult.affectedRows)
-            throw new ModelError(
-                'Có lỗi xảy ra khi cố gắng xoá danh mục khỏi cơ sở dữ liệu.',
-                true,
-                500
-            );
-
-        if (associatedImagePath) {
-            try {
-                await fs.unlink(associatedImagePath);
-            } catch (error) {
-                console.error(
-                    'Có lỗi xảy ra khi xoá hình ảnh của danh mục.\n',
-                    error
+        await queryTransaction<void>(async (connection) => {
+            const [getCategoryImageResult] = await connection.execute<
+                RowDataPacket[]
+            >(`SELECT imageFileName FROM categories WHERE BINARY slug = ?`, [
+                slug,
+            ]);
+            if (!getCategoryImageResult.length)
+                throw new ModelError(
+                    `Không tìm thấy danh mục '${slug}'.`,
+                    false,
+                    400
                 );
-            }
-        }
+
+            const [deleteCategoryResult] =
+                await connection.execute<ResultSetHeader>(
+                    `DELETE FROM categories WHERE BINARY slug = ?`,
+                    [slug]
+                );
+            if (!deleteCategoryResult.affectedRows)
+                throw new ModelError(
+                    'Có lỗi xảy ra khi cố gắng xoá danh mục khỏi cơ sở dữ liệu.',
+                    true,
+                    500
+                );
+
+            const associatedImage =
+                    getCategoryImageResult[0].imageFileName /*?.match(
+                        /[^\/]+$/
+                    )*/,
+                associatedImagePath = associatedImage
+                    ? path.join(pathGlobal.upload, 'category', associatedImage)
+                    : null;
+
+            if (associatedImagePath) await fs.unlink(associatedImagePath);
+        });
 
         return new ModelResponse('Xoá danh mục thành công.', true, null);
     } catch (error) {
@@ -442,17 +461,6 @@ async function uploadCategoryImage(slug: string, image: formidable.File) {
                 400
             );
 
-        const getCategoryFileNameResult: any = await query(
-            `SELECT imageFileName FROM categories WHERE BINARY slug = ?`,
-            [slug]
-        );
-        if (!getCategoryFileNameResult.length)
-            throw new ModelError(
-                `Không tìm thấy danh mục '${slug}'.`,
-                false,
-                400
-            );
-
         if (!image?.mimetype?.includes('image'))
             throw new ModelError(
                 'Định dạng tệp không phải là hình ảnh.',
@@ -460,94 +468,61 @@ async function uploadCategoryImage(slug: string, image: formidable.File) {
                 400
             );
 
-        let isUploadFolderExist;
-        try {
-            isUploadFolderExist = await fs.readdir(pathGlobal.upload);
-        } catch (error) {
-            isUploadFolderExist = false;
-        }
-        if (!isUploadFolderExist) await fs.mkdir(path.join(pathGlobal.upload));
-
-        let isCategoryFolderExist;
-        try {
-            isCategoryFolderExist = await fs.readdir(
-                path.join(pathGlobal.upload, 'category')
-            );
-        } catch (error) {
-            isCategoryFolderExist = false;
-        }
-        if (!isCategoryFolderExist)
-            await fs.mkdir(path.join(path.join(pathGlobal.upload, 'category')));
-
-        const tempPath = image.filepath,
-            newPath = path.join(
-                pathGlobal.upload,
-                'category',
-                image.originalFilename.replace(/\s/g, '')
-            ),
-            rawData = await fs.readFile(tempPath),
-            fileName = path.parse(
-                image.originalFilename.replace(/\s/g, '')
-            ).name,
-            fileExt = path.parse(image.originalFilename.replace(/\s/g, '')).ext;
-
-        let isFileNameAlreadyExist: Buffer | boolean = true,
-            attempt = 0,
-            outputFilePath = newPath;
-        while (isFileNameAlreadyExist) {
-            if (attempt === 3)
+        await queryTransaction<void>(async (connection) => {
+            const [getCategoryFileNameResult] = await connection.execute<
+                RowDataPacket[]
+            >(`SELECT imageFileName FROM categories WHERE BINARY slug = ?`, [
+                slug,
+            ]);
+            if (!getCategoryFileNameResult.length)
                 throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                    true,
+                    `Không tìm thấy danh mục '${slug}'.`,
+                    false,
+                    400
+                );
+
+            const imageInsertData =
+                    await generateCategoryImageInsertData(image),
+                newImageFileName = path.parse(imageInsertData.filePath).base;
+
+            const [updateImageFileNameResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE categories SET \`imageFileName\` = ? WHERE BINARY slug = ?`,
+                    [newImageFileName, slug]
+                );
+            if (!updateImageFileNameResult.affectedRows)
+                throw new ModelError(
+                    `Không tìm thấy danh mục '${slug}' khi cập nhật ảnh.`,
+                    false,
                     500
                 );
 
+            const oldImageFileName =
+                getCategoryFileNameResult[0]
+                    ?.imageFileName; /*?.match(/[^\/]+$/)[0]*/
+            let isOldImageFileExistOnServer;
             try {
-                isFileNameAlreadyExist = await fs.readFile(outputFilePath);
-                outputFilePath = path.join(
-                    pathGlobal.upload,
-                    'category',
-                    `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
+                isOldImageFileExistOnServer = await fs.readFile(
+                    path.join(pathGlobal.upload, 'category', oldImageFileName)
                 );
             } catch (error) {
-                isFileNameAlreadyExist = null;
+                isOldImageFileExistOnServer = null;
             }
-            attempt++;
-        }
 
-        await fs.writeFile(outputFilePath, rawData);
-        const newImageFileName = path.parse(outputFilePath).base;
-        const updateImageFileNameResult: any = await query(
-            `UPDATE categories SET \`imageFileName\` = ? WHERE BINARY slug = ?`,
-            [newImageFileName, slug]
-        );
-        if (!updateImageFileNameResult.affectedRows)
-            throw new ModelError(
-                `Không tìm thấy danh mục '${slug}' khi cập nhật ảnh.`,
-                false,
-                500
+            await fs.writeFile(
+                imageInsertData.filePath,
+                imageInsertData.fileRawData
             );
 
-        const oldImageFileName = getCategoryFileNameResult[0],
-            parsedOldImageFileName =
-                oldImageFileName.imageFileName?.match(/[^\/]+$/)[0];
-        let isOldImageFileExistOnServer;
-        try {
-            isOldImageFileExistOnServer = await fs.readFile(
-                path.join(pathGlobal.upload, 'category', parsedOldImageFileName)
-            );
-        } catch (error) {
-            isOldImageFileExistOnServer = null;
-        }
-
-        if (
-            !!isOldImageFileExistOnServer &&
-            outputFilePath !==
-                path.join(pathGlobal.upload, 'category', parsedOldImageFileName)
-        )
-            await fs.unlink(
-                path.join(pathGlobal.upload, 'category', parsedOldImageFileName)
-            );
+            if (
+                !!isOldImageFileExistOnServer &&
+                imageInsertData.filePath !==
+                    path.join(pathGlobal.upload, 'category', oldImageFileName)
+            )
+                await fs.unlink(
+                    path.join(pathGlobal.upload, 'category', oldImageFileName)
+                );
+        });
 
         return new ModelResponse('Tải hình ảnh thành công.', true, null);
     } catch (error) {

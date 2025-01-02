@@ -33,18 +33,20 @@ async function initialize() {
  * @param params An optional array of parameters to bind to the query.
  * @returns A promise resolving to an array of query results.
  */
-async function query(sql: string, params?: string[]) {
-    const [results] = await mysqlGlobal.pool.execute(sql, params);
+async function query<
+    Type extends mysql.RowDataPacket[] | mysql.ResultSetHeader,
+>(sql: string, params?: string[]) {
+    const [results] = await mysqlGlobal.pool.execute<Type>(sql, params);
     return results;
 }
 
 /**
  * Executes an transaction query.
  * @param callback The callback that execute the transaction logic.
- * @returns A promise resolving to an array of query results.
+ * @returns A promise resolving generic Type.
  */
-async function queryTransaction(
-    callback: (connection: mysql.PoolConnection) => Promise<mysql.QueryResult>
+async function queryTransaction<Type>(
+    callback: (connection: mysql.PoolConnection) => Promise<Type>
 ) {
     const connection = await mysqlGlobal.pool.getConnection();
 

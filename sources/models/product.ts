@@ -4,12 +4,17 @@
  */
 
 'use strict';
+import type {
+    ResultSetHeader,
+    RowDataPacket,
+    PoolConnection,
+} from 'mysql2/promise';
 import { Buffer } from 'buffer';
 import path from 'path';
 import fs from 'fs/promises';
 import formidable from 'formidable';
 
-import { query } from '@sources/services/database';
+import { query, queryTransaction } from '@sources/services/database';
 import {
     ModelError,
     ModelResponse,
@@ -17,6 +22,146 @@ import {
     toSlug,
 } from '@sources/utility/model';
 import pathGlobal from '@sources/global/path';
+
+/**
+ * Generate a new unique product slug for insertion.
+ * @param connection The mysql pool connection instance.
+ * @param productName The product name.
+ * @returns Returns a unique product slug ready for insertion.
+ * @note This function is meant to be called in a transaction context.
+ */
+async function generateProductSlug(
+    connection: PoolConnection,
+    productName: string
+): Promise<string> {
+    let slug = toSlug(productName),
+        slugGenerateAttempt = 0,
+        isDuplicate = true;
+    while (isDuplicate) {
+        if (slugGenerateAttempt !== 0)
+            slug = `${toSlug(productName)}-${Math.floor(Math.random() * Date.now())}`;
+        if (slugGenerateAttempt === 3)
+            throw new ModelError(
+                'Có lỗi xảy ra khi cố gắng tạo slug.',
+                true,
+                500
+            );
+        const [testNewSlugResult] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM products WHERE BINARY slug = ?`,
+            [slug]
+        );
+        isDuplicate = !!testNewSlugResult.length;
+        slugGenerateAttempt++;
+    }
+
+    return slug;
+}
+
+/**
+ * Generate product image insertion data.
+ * @param imageFile Formidable image file.
+ * @returns Returns product image insertion data or null if 'imageFile' argument is null.
+ * @note This function is meant to be called in a transaction context.
+ * @note This function does not create an image on disk.
+ */
+async function generateProductImageInsertData(
+    imageFile: formidable.File
+): Promise<{
+    fileName: string;
+    filePath: string;
+    fileRawData: Buffer;
+} | null> {
+    if (!imageFile) return null;
+
+    let isUploadFolderExist;
+    try {
+        isUploadFolderExist = await fs.readdir(pathGlobal.upload);
+    } catch (error) {
+        isUploadFolderExist = false;
+    }
+    if (!isUploadFolderExist) await fs.mkdir(path.join(pathGlobal.upload));
+
+    let isProductFolderExist;
+    try {
+        isProductFolderExist = await fs.readdir(
+            path.join(pathGlobal.upload, 'product')
+        );
+    } catch (error) {
+        isProductFolderExist = false;
+    }
+    if (!isProductFolderExist)
+        await fs.mkdir(path.join(path.join(pathGlobal.upload, 'product')));
+
+    const tempPath = imageFile.filepath,
+        newPath = path.join(
+            pathGlobal.upload,
+            'product',
+            imageFile.originalFilename.replace(/\s/g, '')
+        ),
+        rawData = await fs.readFile(tempPath),
+        fileName = path.parse(
+            imageFile.originalFilename.replace(/\s/g, '')
+        ).name,
+        fileExt = path.parse(imageFile.originalFilename.replace(/\s/g, '')).ext;
+
+    let isFileNameAlreadyExist: Buffer | boolean = true,
+        fileNameGenerateAttempt = 0,
+        outputFilePath = newPath;
+    while (isFileNameAlreadyExist) {
+        if (fileNameGenerateAttempt === 3)
+            throw new ModelError(
+                'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
+                true,
+                500
+            );
+
+        try {
+            isFileNameAlreadyExist = await fs.readFile(outputFilePath);
+            outputFilePath = path.join(
+                pathGlobal.upload,
+                'product',
+                `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
+            );
+        } catch (error) {
+            isFileNameAlreadyExist = null;
+        }
+        fileNameGenerateAttempt++;
+    }
+
+    return {
+        fileName: path.parse(outputFilePath).base,
+        filePath: outputFilePath,
+        fileRawData: rawData,
+    };
+}
+
+/**
+ * Check if the categories are valid.
+ * @param connection The mysql pool connection instance.
+ * @param categories The categories to be checked.
+ * @returns Returns true if the categories are valid, otherwise returns false.
+ * @note This function is meant to be called in a transaction context.
+ */
+async function validateProductCategories(
+    connection: PoolConnection,
+    categories: string[]
+): Promise<boolean> {
+    if (!categories) return false;
+
+    const [getCategoriesSlugResult] = await connection.execute<RowDataPacket[]>(
+            'SELECT slug FROM categories'
+        ),
+        validCategoriesSlug: string[] = getCategoriesSlugResult.map(
+            (category) => category?.slug
+        );
+
+    const isCategoriesValid = categories?.every((categorySlug) => {
+        if (!validCategoriesSlug?.includes(categorySlug)) return false;
+        return true;
+    });
+
+    return isCategoriesValid;
+}
 
 /**
  * Get products.
@@ -28,16 +173,30 @@ async function getProducts(page: number = 1, itemPerPage: number = 12) {
     try {
         const offset = getOffset(page, itemPerPage);
 
-        const itemsQueryResult = await query(
-                `SELECT slug, \`name\`, category, \`desc\`, price, imageFileName, quantity, priority FROM products LIMIT ?, ?`,
+        const itemsQueryResult = await query<RowDataPacket[]>(
+                `SELECT slug, \`name\`, \`desc\`, price, imageFileName, quantity, priority FROM products LIMIT ?, ?`,
                 [`${offset}`, `${itemPerPage}`]
             ),
             products = itemsQueryResult || [];
 
-        const totalItemsQueryResult = await query(
+        const transformedProducts = await Promise.all(
+            products.map(async (product) => {
+                const getProductCategoriesResult = await query<RowDataPacket[]>(
+                        'SELECT product_categories.category_slug FROM product_categories JOIN categories ON product_categories.category_slug = categories.slug WHERE product_categories.product_slug = ? ORDER BY categories.priority DESC',
+                        [product.slug]
+                    ),
+                    productCategories = getProductCategoriesResult.map(
+                        (category) => `${category['category_slug']}`
+                    );
+                product['category'] = productCategories;
+                return product;
+            })
+        );
+
+        const totalItemsQueryResult = await query<RowDataPacket[]>(
                 `SELECT COUNT(*) AS total_items from products`
             ),
-            totalProducts = (totalItemsQueryResult as any[])[0].total_items;
+            totalProducts = totalItemsQueryResult[0].total_items;
 
         const prevPage = Math.max(1, page - 1),
             nextPage = Math.max(
@@ -57,7 +216,7 @@ async function getProducts(page: number = 1, itemPerPage: number = 12) {
 
         return new ModelResponse('Truy xuất dữ liệu thành công.', true, {
             meta,
-            products,
+            products: transformedProducts,
         });
     } catch (error) {
         console.error(error);
@@ -120,178 +279,75 @@ async function createProduct(
         priority = Math.max(0, Math.min(priority, 2147483647));
         price = Math.max(0, Math.min(price, 2147483647));
 
-        let transformedCategories: string[];
-        if (categories) {
-            transformedCategories = categories?.split(',');
-            const categoryResult = (await query(
-                    `SELECT slug FROM categories`
-                )) as any[],
-                currentCategories = categoryResult.map(
-                    (category) => category?.slug
-                );
-            let isInvalidCategory = false;
-            transformedCategories?.every((itemCategory) => {
-                if (!currentCategories?.includes(itemCategory)) {
-                    isInvalidCategory = true;
-                    return false;
-                }
-                return true;
-            });
-            if (isInvalidCategory)
-                throw new ModelError('Danh mục không hợp lệ.', false, 400);
-        }
-        let insertCategories = transformedCategories
-            ? `[${transformedCategories?.map((categoryValue) => `"${categoryValue}"`)?.join(',')}]`
-            : '[]';
+        if (image && !image?.mimetype?.includes('image'))
+            throw new ModelError(
+                'Định dạng tệp không phải là hình ảnh.',
+                false,
+                400
+            );
 
-        let newSlug = toSlug(name),
-            slugGenerateAttempt = 0,
-            isDuplicate = true;
-        while (isDuplicate) {
-            if (slugGenerateAttempt !== 0)
-                newSlug = `${toSlug(name)}-${Math.floor(Math.random() * Date.now())}`;
-            if (slugGenerateAttempt === 3)
-                throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng tạo slug.',
-                    true,
-                    500
-                );
-            let testNewSlugResult = (await query(
-                `SELECT id FROM products WHERE BINARY slug = ?`,
-                [newSlug]
-            )) as unknown as any[];
-            isDuplicate = !!testNewSlugResult.length;
-            slugGenerateAttempt++;
-        }
+        await queryTransaction<void>(async (connection) => {
+            const productSlug = await generateProductSlug(connection, name),
+                imageInsertData = await generateProductImageInsertData(image);
 
-        if (image) {
-            if (image && !image?.mimetype?.includes('image'))
-                throw new ModelError(
-                    'Định dạng tệp không phải là hình ảnh.',
-                    false,
-                    400
-                );
-
-            let isUploadFolderExist;
-            try {
-                isUploadFolderExist = await fs.readdir(pathGlobal.upload);
-            } catch (error) {
-                isUploadFolderExist = false;
-            }
-            if (!isUploadFolderExist)
-                await fs.mkdir(path.join(pathGlobal.upload));
-
-            let isProductFolderExist;
-            try {
-                isProductFolderExist = await fs.readdir(
-                    path.join(pathGlobal.upload, 'product')
-                );
-            } catch (error) {
-                isProductFolderExist = false;
-            }
-            if (!isProductFolderExist)
-                await fs.mkdir(
-                    path.join(path.join(pathGlobal.upload, 'product'))
-                );
-
-            const tempPath = image.filepath,
-                newPath = path.join(
-                    pathGlobal.upload,
-                    'product',
-                    image.originalFilename.replace(/\s/g, '')
-                ),
-                rawData = await fs.readFile(tempPath),
-                fileName = path.parse(
-                    image.originalFilename.replace(/\s/g, '')
-                ).name,
-                fileExt = path.parse(
-                    image.originalFilename.replace(/\s/g, '')
-                ).ext;
-
-            let isFileNameAlreadyExist: Buffer | boolean = true,
-                fileNameGenerateAttempt = 0,
-                outputFilePath = newPath;
-            while (isFileNameAlreadyExist) {
-                if (fileNameGenerateAttempt === 3)
-                    throw new ModelError(
-                        'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                        true,
-                        500
-                    );
-
-                try {
-                    isFileNameAlreadyExist = await fs.readFile(outputFilePath);
-                    outputFilePath = path.join(
-                        pathGlobal.upload,
-                        'product',
-                        `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
-                    );
-                } catch (error) {
-                    isFileNameAlreadyExist = null;
-                }
-                fileNameGenerateAttempt++;
-            }
-
-            await fs.writeFile(outputFilePath, rawData);
-
-            const imageFileName = path.parse(outputFilePath).base;
-            try {
-                const insertResult: any = await query(
-                    `INSERT INTO products (\`slug\`, \`name\`, \`category\`, \`desc\`, \`price\`, \`imageFileName\`, \`quantity\`, \`priority\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            const [insertProductResult] =
+                await connection.execute<ResultSetHeader>(
+                    `INSERT INTO products (\`slug\`, \`name\`, \`desc\`, \`price\`, \`imageFileName\`, \`quantity\`, \`priority\`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
                     [
-                        newSlug,
+                        productSlug,
                         name,
-                        insertCategories,
                         desc,
                         `${price}`,
-                        imageFileName,
+                        imageInsertData?.fileName || null,
                         `${quantity}`,
                         `${priority}`,
                     ]
                 );
-                if (!insertResult.affectedRows)
-                    throw new ModelError(
-                        'Cập nhật sản phẩm vào cơ sở dữ liệu thất bại (products).',
-                        true,
-                        500
-                    );
-
-                return new ModelResponse(
-                    'Tạo sản phẩm thành công.',
-                    true,
-                    null
-                );
-            } catch (error) {
-                await fs.unlink(path.join(outputFilePath));
-
+            if (!insertProductResult.affectedRows)
                 throw new ModelError(
                     'Cập nhật sản phẩm vào cơ sở dữ liệu thất bại (products).',
                     true,
                     500
                 );
+
+            if (categories) {
+                const isCategoriesValid = await validateProductCategories(
+                    connection,
+                    categories?.split(',')
+                );
+                if (!isCategoriesValid)
+                    throw new ModelError('Danh mục không hợp lệ.', false, 400);
+
+                const insertCategoriesResult = await Promise.all(
+                    categories?.split(',').map(async (categorySlug) => {
+                        const [insertCategoryResult] =
+                            await connection.execute<ResultSetHeader>(
+                                'INSERT INTO product_categories (product_slug, category_slug) VALUES (?, ?)',
+                                [productSlug, categorySlug]
+                            );
+                        if (!insertCategoryResult.affectedRows) return false;
+                        return true;
+                    })
+                );
+
+                for (const result in insertCategoriesResult) {
+                    if (!result)
+                        throw new ModelError(
+                            'Có lỗi xảy ra khi thêm danh mục của sản phẩm (product_categories)',
+                            true,
+                            500
+                        );
+                }
             }
-        } else {
-            const insertResult: any = await query(
-                `INSERT INTO products (\`slug\`, \`name\`, \`category\`, \`desc\`, \`price\`, \`quantity\`, \`priority\`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    newSlug,
-                    name,
-                    insertCategories,
-                    desc,
-                    `${price}`,
-                    `${quantity}`,
-                    `${priority}`,
-                ]
-            );
-            if (!insertResult.affectedRows)
-                throw new ModelError(
-                    'Cập nhật sản phẩm vào cơ sở dữ liệu thất bại (products).',
-                    true,
-                    500
-                );
 
-            return new ModelResponse('Tạo sản phẩm thành công.', true, null);
-        }
+            if (imageInsertData)
+                await fs.writeFile(
+                    imageInsertData.filePath,
+                    imageInsertData.fileRawData
+                );
+        });
+
+        return new ModelResponse('Tạo sản phẩm thành công.', true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
@@ -354,78 +410,67 @@ async function updateProduct(
         if (quantity || quantity === 0)
             quantity = Math.max(0, Math.min(quantity, 2147483647));
 
-        let transformedCategories: string[];
-        if (categories) {
-            transformedCategories = categories?.split(',');
-            const categoryResult = (await query(
-                    `SELECT slug FROM categories`
-                )) as any[],
-                currentCategories = categoryResult.map(
-                    (category) => category?.slug
-                );
-            let isInvalidCategory = false;
-            transformedCategories?.every((itemCategory) => {
-                if (!currentCategories?.includes(itemCategory)) {
-                    isInvalidCategory = true;
-                    return false;
-                }
-                return true;
-            });
-            if (isInvalidCategory)
-                throw new ModelError('Danh mục không hợp lệ.', false, 400);
-        }
-        let insertCategories = transformedCategories
-            ? `[${transformedCategories?.map((categoryValue) => `"${categoryValue}"`)?.join(',')}]`
-            : '[]';
+        await queryTransaction<void>(async (connection) => {
+            const productSlug = await generateProductSlug(connection, name);
 
-        let newSlug = toSlug(name),
-            attempt = 0,
-            isDuplicate = true;
-        while (isDuplicate && newSlug !== slug) {
-            if (attempt !== 0)
-                newSlug = `${toSlug(name)}-${Math.floor(Math.random() * Date.now())}`;
-            if (attempt === 3)
+            let columns = ['slug', 'name', 'desc', 'price', 'priority'],
+                params = [productSlug, name, desc, `${price}`, `${priority}`];
+            if (quantity || quantity === 0) {
+                columns.push('quantity');
+                params.push(`${quantity}`);
+            }
+
+            const setSQL = columns
+                .map((property) => `\`${property}\` = ?`)
+                .join(', ');
+
+            const [updateProductResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE products SET ${setSQL} WHERE BINARY slug = ?`,
+                    [...params, slug]
+                );
+            if (!updateProductResult.affectedRows)
                 throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng tạo slug.',
-                    true,
-                    500
+                    `Không tìm thấy sản phẩm '${slug}'.`,
+                    false,
+                    400
                 );
-            let testNewSlugResult = (await query(
-                `SELECT id FROM products WHERE BINARY slug = ?`,
-                [newSlug]
-            )) as unknown as any[];
-            isDuplicate = !!testNewSlugResult.length;
-            attempt++;
-        }
 
-        let columns = ['slug', 'name', 'category', 'desc', 'price', 'priority'],
-            params = [
-                newSlug,
-                name,
-                insertCategories,
-                desc,
-                `${price}`,
-                `${priority}`,
-            ];
-        if (quantity || quantity === 0) {
-            columns.push('quantity');
-            params.push(`${quantity}`);
-        }
-
-        const setSQL = columns
-            .map((property) => `\`${property}\` = ?`)
-            .join(', ');
-
-        const updateResult: any = await query(
-            `UPDATE products SET ${setSQL} WHERE BINARY slug = ?`,
-            [...params, slug]
-        );
-        if (!updateResult.affectedRows)
-            throw new ModelError(
-                `Không tìm thấy sản phẩm '${slug}'.`,
-                false,
-                400
+            await connection.execute<ResultSetHeader>(
+                'DELETE FROM product_categories WHERE product_slug = ?',
+                [productSlug]
             );
+
+            if (categories) {
+                const isCategoriesValid = await validateProductCategories(
+                    connection,
+                    categories?.split(',')
+                );
+                if (!isCategoriesValid)
+                    throw new ModelError('Danh mục không hợp lệ.', false, 400);
+
+                const insertCategoriesResult = await Promise.all(
+                    categories?.split(',').map(async (categorySlug) => {
+                        const [insertCategoryResult] =
+                            await connection.execute<ResultSetHeader>(
+                                'INSERT INTO product_categories (product_slug, category_slug) VALUES (?, ?)',
+                                [productSlug, categorySlug]
+                            );
+                        if (!insertCategoryResult.affectedRows) return false;
+                        return true;
+                    })
+                );
+
+                for (const result in insertCategoriesResult) {
+                    if (!result)
+                        throw new ModelError(
+                            'Có lỗi xảy ra khi thêm danh mục của sản phẩm (product_categories)',
+                            true,
+                            500
+                        );
+                }
+            }
+        });
 
         return new ModelResponse('Cập nhật sản phẩm thành công.', true, null);
     } catch (error) {
@@ -452,44 +497,40 @@ async function deleteProduct(slug: string) {
         if (!slug)
             throw new ModelError(`Thông tin 'slug' bị thiếu.`, false, 400);
 
-        const getProductImageResult: any = await query(
-            `SELECT imageFileName FROM products WHERE BINARY slug = ?`,
-            [slug]
-        );
-        if (!getProductImageResult.length)
-            throw new ModelError(
-                `Không tìm thấy sản phẩm '${slug}'.`,
-                false,
-                400
-            );
-
-        const associatedImage =
-                getProductImageResult[0].imageFileName?.match(/[^\/]+$/)[0],
-            associatedImagePath = associatedImage
-                ? path.join(pathGlobal.upload, 'product', associatedImage)
-                : null;
-
-        const deleteProductResult: any = await query(
-            `DELETE FROM products WHERE BINARY slug = ?`,
-            [slug]
-        );
-        if (!deleteProductResult.affectedRows)
-            throw new ModelError(
-                'Có lỗi xảy ra khi cố gắng xoá sản phẩm khỏi cơ sở dữ liệu.',
-                true,
-                500
-            );
-
-        if (associatedImagePath) {
-            try {
-                await fs.unlink(associatedImagePath);
-            } catch (error) {
-                console.error(
-                    'Có lỗi xảy ra khi xoá hình ảnh của sản phẩm.\n',
-                    error
+        await queryTransaction<void>(async (connection) => {
+            const [getProductImageResult] = await connection.execute<
+                RowDataPacket[]
+            >(`SELECT imageFileName FROM products WHERE BINARY slug = ?`, [
+                slug,
+            ]);
+            if (!getProductImageResult.length)
+                throw new ModelError(
+                    `Không tìm thấy sản phẩm '${slug}'.`,
+                    false,
+                    400
                 );
-            }
-        }
+
+            const [deleteProductResult] =
+                await connection.execute<ResultSetHeader>(
+                    `DELETE FROM products WHERE BINARY slug = ?`,
+                    [slug]
+                );
+            if (!deleteProductResult.affectedRows)
+                throw new ModelError(
+                    'Có lỗi xảy ra khi cố gắng xoá sản phẩm khỏi cơ sở dữ liệu.',
+                    true,
+                    500
+                );
+
+            const associatedImage =
+                    getProductImageResult[0]
+                        .imageFileName /*?.match(/[^\/]+$/)[0]*/,
+                associatedImagePath = associatedImage
+                    ? path.join(pathGlobal.upload, 'product', associatedImage)
+                    : null;
+
+            if (associatedImagePath) await fs.unlink(associatedImagePath);
+        });
 
         return new ModelResponse('Xoá sản phẩm thành công.', true, null);
     } catch (error) {
@@ -521,17 +562,6 @@ async function uploadProductImage(slug: string, image: formidable.File) {
                 400
             );
 
-        const getProductFileNameResult: any = await query(
-            `SELECT imageFileName FROM products WHERE BINARY slug = ?`,
-            [slug]
-        );
-        if (!getProductFileNameResult.length)
-            throw new ModelError(
-                `Không tìm thấy sản phẩm '${slug}'.`,
-                false,
-                400
-            );
-
         if (!image?.mimetype?.includes('image'))
             throw new ModelError(
                 'Định dạng tệp không phải là hình ảnh.',
@@ -539,94 +569,60 @@ async function uploadProductImage(slug: string, image: formidable.File) {
                 400
             );
 
-        let isUploadFolderExist;
-        try {
-            isUploadFolderExist = await fs.readdir(pathGlobal.upload);
-        } catch (error) {
-            isUploadFolderExist = false;
-        }
-        if (!isUploadFolderExist) await fs.mkdir(path.join(pathGlobal.upload));
-
-        let isProductFolderExist;
-        try {
-            isProductFolderExist = await fs.readdir(
-                path.join(pathGlobal.upload, 'product')
-            );
-        } catch (error) {
-            isProductFolderExist = false;
-        }
-        if (!isProductFolderExist)
-            await fs.mkdir(path.join(path.join(pathGlobal.upload, 'product')));
-
-        const tempPath = image.filepath,
-            newPath = path.join(
-                pathGlobal.upload,
-                'product',
-                image.originalFilename.replace(/\s/g, '')
-            ),
-            rawData = await fs.readFile(tempPath),
-            fileName = path.parse(
-                image.originalFilename.replace(/\s/g, '')
-            ).name,
-            fileExt = path.parse(image.originalFilename.replace(/\s/g, '')).ext;
-
-        let isFileNameAlreadyExist: Buffer | boolean = true,
-            attempt = 0,
-            outputFilePath = newPath;
-        while (isFileNameAlreadyExist) {
-            if (attempt === 3)
+        await queryTransaction<void>(async (connection) => {
+            const [getProductFileNameResult] = await connection.execute<
+                RowDataPacket[]
+            >(`SELECT imageFileName FROM products WHERE BINARY slug = ?`, [
+                slug,
+            ]);
+            if (!getProductFileNameResult.length)
                 throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                    true,
+                    `Không tìm thấy sản phẩm '${slug}'.`,
+                    false,
+                    400
+                );
+
+            const imageInsertData = await generateProductImageInsertData(image),
+                newImageFileName = path.parse(imageInsertData.filePath).base;
+
+            const [updateImageFileNameResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE products SET \`imageFileName\` = ? WHERE BINARY slug = ?`,
+                    [newImageFileName, slug]
+                );
+            if (!updateImageFileNameResult.affectedRows)
+                throw new ModelError(
+                    `Không tìm thấy sản phẩm '${slug}' khi cập nhật ảnh.`,
+                    false,
                     500
                 );
 
+            const oldImageFileName =
+                getProductFileNameResult[0]
+                    ?.imageFileName; /*?.match(/[^\/]+$/)[0]*/
+            let isOldImageFileExistOnServer;
             try {
-                isFileNameAlreadyExist = await fs.readFile(outputFilePath);
-                outputFilePath = path.join(
-                    pathGlobal.upload,
-                    'product',
-                    `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
+                isOldImageFileExistOnServer = await fs.readFile(
+                    path.join(pathGlobal.upload, 'product', oldImageFileName)
                 );
             } catch (error) {
-                isFileNameAlreadyExist = null;
+                isOldImageFileExistOnServer = null;
             }
-            attempt++;
-        }
 
-        await fs.writeFile(outputFilePath, rawData);
-        const newImageFileName = path.parse(outputFilePath).base;
-        const updateImageFileNameResult: any = await query(
-            `UPDATE products SET \`imageFileName\` = ? WHERE BINARY slug = ?`,
-            [newImageFileName, slug]
-        );
-        if (!updateImageFileNameResult.affectedRows)
-            throw new ModelError(
-                `Không tìm thấy sản phẩm '${slug}' khi cập nhật ảnh.`,
-                false,
-                500
+            await fs.writeFile(
+                imageInsertData.filePath,
+                imageInsertData.fileRawData
             );
 
-        const oldImageFileName = getProductFileNameResult[0],
-            parsedOldImageFileName =
-                oldImageFileName.imageFileName?.match(/[^\/]+$/)[0];
-        let isOldImageFileExistOnServer;
-        try {
-            isOldImageFileExistOnServer = await fs.readFile(
-                path.join(pathGlobal.upload, 'product', parsedOldImageFileName)
-            );
-        } catch (error) {
-            isOldImageFileExistOnServer = null;
-        }
-
-        if (
-            !!isOldImageFileExistOnServer &&
-            outputFilePath !==
-                path.join(pathGlobal.upload, 'product', parsedOldImageFileName)
-        )
-            await fs.unlink(
-                path.join(pathGlobal.upload, 'product', parsedOldImageFileName)
-            );
+            if (
+                !!isOldImageFileExistOnServer &&
+                imageInsertData.filePath !==
+                    path.join(pathGlobal.upload, 'product', oldImageFileName)
+            )
+                await fs.unlink(
+                    path.join(pathGlobal.upload, 'product', oldImageFileName)
+                );
+        });
 
         return new ModelResponse('Tải hình ảnh thành công.', true, null);
     } catch (error) {
