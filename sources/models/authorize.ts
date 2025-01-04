@@ -4,6 +4,7 @@
  */
 
 'use strict';
+import type { RowDataPacket } from 'mysql2/promise';
 import { RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
@@ -28,13 +29,13 @@ async function authorize(username: string, password: string) {
                 400
             );
 
-        const userInformation = (await query(
+        const userInformation = await query<RowDataPacket[]>(
             `SELECT c.username, c.password, u.email, u.role, u.avatarFileName
                                                 FROM credentials c JOIN users u 
                                                 ON c.username = u.username 
                                                 WHERE c.username = ?`,
             [username]
-        )) as any[];
+        );
         if (!userInformation.length)
             throw new ModelError(
                 'Tên người dùng hoặc mật khẩu chưa chính xác.',
@@ -106,13 +107,13 @@ async function refreshTokens(refreshToken: string, username: string) {
                 400
             );
 
-        const userInformation = (await query(
+        const userInformation = await query<RowDataPacket[]>(
             `SELECT c.username, c.password, u.email, u.role, u.avatarFileName
                                                     FROM credentials c JOIN users u 
                                                     ON c.username = u.username 
                                                     WHERE c.username = ?`,
             [username]
-        )) as any[];
+        );
         if (!userInformation.length)
             throw new ModelError('Token không hợp lệ.', false, 401);
 
@@ -199,8 +200,8 @@ async function verifyAccessToken(accessToken: string) {
                 401
             );
 
-        const userCredentials: any = await query(
-            `SELECT * FROM credentials WHERE username = ?`,
+        const userCredentials = await query<RowDataPacket[]>(
+            `SELECT * FROM credentials WHERE BINARY username = ?`,
             [decoded.username]
         );
         if (!userCredentials.length)

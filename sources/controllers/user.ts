@@ -17,7 +17,7 @@ class UserController {
     getInfo: RequestHandler = async (request, response, next) => {
         const { username } = request.params;
 
-        const userResult = await model.getInfo(username);
+        const userResult = await model.getInfo(username?.toLowerCase());
         if (!userResult.success)
             return response.status(userResult.statusCode).json({
                 message: userResult.message,
@@ -33,7 +33,10 @@ class UserController {
     updateInfo: RequestHandler = async (request, response, next) => {
         const { username } = request.params;
 
-        const updateInfoResult = await model.updateInfo(username, request.body);
+        const updateInfoResult = await model.updateInfo(
+            username?.toLowerCase(),
+            request.body
+        );
         if (!updateInfoResult.success)
             return response.status(updateInfoResult.statusCode).json({
                 message: updateInfoResult.message,
@@ -67,7 +70,7 @@ class UserController {
             { currentPassword, newPassword } = request.body;
 
         const updatePasswordResult = await model.updatePassword(
-            username,
+            username?.toLowerCase(),
             currentPassword,
             newPassword
         );
@@ -87,7 +90,10 @@ class UserController {
         const { username } = request.params,
             { currentPassword } = request.body;
 
-        const deleteResult = await model.deleteUser(username, currentPassword);
+        const deleteResult = await model.deleteUser(
+            username?.toLowerCase(),
+            currentPassword
+        );
         if (!deleteResult.success)
             return response
                 .status(deleteResult.statusCode)
@@ -148,7 +154,7 @@ class UserController {
 
             const createResult = await model.createUserAsAdmin(
                 email,
-                username,
+                username.toLowerCase(),
                 password,
                 role,
                 avatarImage
@@ -183,9 +189,9 @@ class UserController {
             request.body;
 
         const updateUserResult = await model.updateUserAsAdmin(
-            targetUsername,
+            targetUsername?.toLowerCase(),
             email,
-            username,
+            username?.toLowerCase(),
             password,
             role
         );
@@ -204,7 +210,9 @@ class UserController {
     deleteUserAsAdmin: RequestHandler = async (request, response, next) => {
         const { username } = request.body;
 
-        const deleteUserResult = await model.deleteUserAsAdmin(username);
+        const deleteUserResult = await model.deleteUserAsAdmin(
+            username?.toLowerCase()
+        );
         if (!deleteUserResult.success)
             return response.status(deleteUserResult.statusCode).json({
                 message: deleteUserResult.message,
@@ -234,7 +242,7 @@ class UserController {
             const { username } = request.params;
 
             const uploadResult = await model.uploadUserAvatar(
-                username,
+                username?.toLowerCase(),
                 avatarImage
             );
             if (!uploadResult.success)
@@ -284,7 +292,7 @@ class UserController {
                     : null;
 
             const uploadResult = await model.uploadUserAvatar(
-                username,
+                username?.toLowerCase(),
                 avatarImage
             );
             if (!uploadResult.success)

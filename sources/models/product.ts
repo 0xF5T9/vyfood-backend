@@ -173,51 +173,66 @@ async function getProducts(page: number = 1, itemPerPage: number = 12) {
     try {
         const offset = getOffset(page, itemPerPage);
 
-        const itemsQueryResult = await query<RowDataPacket[]>(
-                `SELECT slug, \`name\`, \`desc\`, price, imageFileName, quantity, priority FROM products LIMIT ?, ?`,
-                [`${offset}`, `${itemPerPage}`]
-            ),
-            products = itemsQueryResult || [];
+        const result = await queryTransaction<{
+            meta: {
+                page: number;
+                itemPerPage: number;
+                totalItems: any;
+                isFirstPage: boolean;
+                isLastPage: boolean;
+                prevPage: string;
+                nextPage: string;
+            };
+            products: any;
+        }>(async (connection) => {
+            const [getProductResult] = await connection.execute<
+                    RowDataPacket[]
+                >(
+                    `SELECT slug, \`name\`, \`desc\`, price, imageFileName, quantity, priority FROM products LIMIT ?, ?`,
+                    [`${offset}`, `${itemPerPage}`]
+                ),
+                products = getProductResult;
 
-        const transformedProducts = await Promise.all(
-            products.map(async (product) => {
-                const getProductCategoriesResult = await query<RowDataPacket[]>(
-                        'SELECT product_categories.category_slug FROM product_categories JOIN categories ON product_categories.category_slug = categories.slug WHERE product_categories.product_slug = ? ORDER BY categories.priority DESC',
-                        [product.slug]
-                    ),
-                    productCategories = getProductCategoriesResult.map(
-                        (category) => `${category['category_slug']}`
-                    );
-                product['category'] = productCategories;
-                return product;
-            })
-        );
-
-        const totalItemsQueryResult = await query<RowDataPacket[]>(
-                `SELECT COUNT(*) AS total_items from products`
-            ),
-            totalProducts = totalItemsQueryResult[0].total_items;
-
-        const prevPage = Math.max(1, page - 1),
-            nextPage = Math.max(
-                1,
-                Math.min(Math.ceil(totalProducts / itemPerPage), page + 1)
+            const transformedProducts = await Promise.all(
+                products.map(async (product) => {
+                    const [getProductCategoriesResult] =
+                            await connection.execute<RowDataPacket[]>(
+                                'SELECT product_categories.category_slug FROM product_categories JOIN categories ON product_categories.category_slug = categories.slug WHERE product_categories.product_slug = ? ORDER BY categories.priority DESC',
+                                [product.slug]
+                            ),
+                        productCategories = getProductCategoriesResult.map(
+                            (category) => `${category['category_slug']}`
+                        );
+                    product['category'] = productCategories;
+                    return product;
+                })
             );
 
-        const meta = {
-            page,
-            itemPerPage,
-            totalItems: totalProducts,
-            isFirstPage: page === 1,
-            isLastPage: page === nextPage,
-            prevPage: `/product?page=${prevPage}&itemPerPage=${itemPerPage}`,
-            nextPage: `/product?page=${nextPage}&itemPerPage=${itemPerPage}`,
-        };
+            const [totalItemsQueryResult] = await connection.execute<
+                    Array<RowDataPacket & { total_items: number }>
+                >(`SELECT COUNT(*) AS total_items from products`),
+                totalProducts = totalItemsQueryResult[0].total_items;
 
-        return new ModelResponse('Truy xuất dữ liệu thành công.', true, {
-            meta,
-            products: transformedProducts,
+            const prevPage = Math.max(1, page - 1),
+                nextPage = Math.max(
+                    1,
+                    Math.min(Math.ceil(totalProducts / itemPerPage), page + 1)
+                );
+
+            const meta = {
+                page,
+                itemPerPage,
+                totalItems: totalProducts,
+                isFirstPage: page === 1,
+                isLastPage: page === nextPage,
+                prevPage: `/product?page=${prevPage}&itemPerPage=${itemPerPage}`,
+                nextPage: `/product?page=${nextPage}&itemPerPage=${itemPerPage}`,
+            };
+
+            return { meta, products: transformedProducts };
         });
+
+        return new ModelResponse('Truy xuất dữ liệu thành công.', true, result);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;

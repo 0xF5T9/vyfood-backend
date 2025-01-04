@@ -17,7 +17,10 @@ class AuthorizeController {
     authorize: RequestHandler = async (request, response, next) => {
         const { username, password } = request.body;
 
-        const authorizeResult = await model.authorize(username, password);
+        const authorizeResult = await model.authorize(
+            username?.toLowerCase(),
+            password
+        );
         if (!authorizeResult.success)
             return response
                 .status(authorizeResult.statusCode)
@@ -59,14 +62,14 @@ class AuthorizeController {
             await model.verifyAccessToken(accessToken);
         let result = verifyAccessTokenResult;
         if (!verifyAccessTokenResult.success || forceRefreshToken) {
-            if (!verifyAccessTokenResult?.data?.username)
+            if (!verifyAccessTokenResult?.data?.username?.toLowerCase())
                 return response
                     .status(verifyAccessTokenResult.statusCode)
                     .json({ message: verifyAccessTokenResult.message });
 
             const refreshTokensResult = await model.refreshTokens(
                 refreshToken,
-                verifyAccessTokenResult?.data?.username
+                verifyAccessTokenResult?.data?.username?.toLowerCase()
             );
             if (!refreshTokensResult.success)
                 return response

@@ -4,6 +4,7 @@
  */
 
 'use strict';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import type { UserUpdateFields } from '@sources/types/user';
 import nodemailer from 'nodemailer';
 import jwt from 'jsonwebtoken';
@@ -14,36 +15,93 @@ import path from 'path';
 import fs from 'fs/promises';
 
 import { query, queryTransaction } from '@sources/services/database';
-import { ModelError, ModelResponse, getOffset } from '@sources/utility/model';
+import {
+    ModelError,
+    ModelResponse,
+    getOffset,
+    validateUsername,
+    validateEmail,
+    hashPassword,
+    validatePassword,
+} from '@sources/utility/model';
 import pathGlobal from '@sources/global/path';
 
 /**
- * Hash password using bcrypt.
- * @param password Password string.
- * @param saltRounds Salt rounds. (default: 10)
- * @returns Returns the response object.
+ * Generate user avatar image insertion data.
+ * @param imageFile Formidable image file.
+ * @returns Returns user avatar image insertion data or null if 'imageFile' argument is null.
+ * @note This function is meant to be called in a transaction context.
+ * @note This function does not create an image on disk.
  */
-async function hashPassword(password: string, saltRounds: number = 10) {
+async function generateUserAvatarImageInsertData(
+    imageFile: formidable.File
+): Promise<{
+    fileName: string;
+    filePath: string;
+    fileRawData: Buffer;
+} | null> {
+    if (!imageFile) return null;
+
+    let isUploadFolderExist;
     try {
-        const salt = await bcrypt.genSalt(saltRounds),
-            hashedPassword = await bcrypt.hash(password, salt);
-
-        return new ModelResponse('Băm mật khẩu thành công.', true, {
-            generatedSalt: salt,
-            hashedPassword,
-        });
+        isUploadFolderExist = await fs.readdir(pathGlobal.upload);
     } catch (error) {
-        console.error(error);
-        if (error.isServerError === undefined) error.isServerError = true;
-
-        return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
-            false,
-            null,
-            error.isServerError,
-            error.statusCode
-        );
+        isUploadFolderExist = false;
     }
+    if (!isUploadFolderExist) await fs.mkdir(path.join(pathGlobal.upload));
+
+    let isUserAvatarFolderExist;
+    try {
+        isUserAvatarFolderExist = await fs.readdir(
+            path.join(pathGlobal.upload, 'avatar')
+        );
+    } catch (error) {
+        isUserAvatarFolderExist = false;
+    }
+    if (!isUserAvatarFolderExist)
+        await fs.mkdir(path.join(path.join(pathGlobal.upload, 'avatar')));
+
+    const tempPath = imageFile.filepath,
+        newPath = path.join(
+            pathGlobal.upload,
+            'avatar',
+            imageFile.originalFilename.replace(/\s/g, '')
+        ),
+        rawData = await fs.readFile(tempPath),
+        fileName = path.parse(
+            imageFile.originalFilename.replace(/\s/g, '')
+        ).name,
+        fileExt = path.parse(imageFile.originalFilename.replace(/\s/g, '')).ext;
+
+    let isFileNameAlreadyExist: Buffer | boolean = true,
+        fileNameGenerateAttempt = 0,
+        outputFilePath = newPath;
+    while (isFileNameAlreadyExist) {
+        if (fileNameGenerateAttempt === 3)
+            throw new ModelError(
+                'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
+                true,
+                500
+            );
+
+        try {
+            isFileNameAlreadyExist = await fs.readFile(outputFilePath);
+            outputFilePath = path.join(
+                pathGlobal.upload,
+                'avatar',
+                `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
+            );
+        } catch (error) {
+            isFileNameAlreadyExist = null;
+        }
+        fileNameGenerateAttempt++;
+    }
+
+    return {
+        fileName: path.parse(outputFilePath).base,
+        filePath: outputFilePath,
+        fileRawData: rawData,
+    };
 }
 
 /**
@@ -53,22 +111,21 @@ async function hashPassword(password: string, saltRounds: number = 10) {
  */
 async function getInfo(username: string) {
     try {
-        const sql = `SELECT username, email, role, avatarFileName, createdAt FROM users WHERE username = ?`;
-
-        const result: any = await query(sql, [username]);
-        if (!!!result.length)
+        const getUserInfoResult = await query<RowDataPacket[]>(
+            'SELECT username, email, role, avatarFileName, createdAt FROM users WHERE BINARY username = ?',
+            [username]
+        );
+        if (!getUserInfoResult.length)
             throw new ModelError(
                 'Không tìm thấy dữ liệu người dùng nào.',
                 true,
                 500
             );
 
-        const userInfo = result[0];
-
         return new ModelResponse(
             'Truy xuất dữ liệu người dùng thành công.',
             true,
-            userInfo
+            getUserInfoResult[0]
         );
     } catch (error) {
         console.error(error);
@@ -94,78 +151,55 @@ async function updateInfo(username: string, fields: UserUpdateFields) {
     try {
         const { email } = fields;
 
-        // Update email.
-        if (email) {
-            if (!/^[a-z0-9](\.?[a-z0-9]){5,}@g(oogle)?mail\.com$/.test(email))
-                throw new ModelError(
-                    'Địa chỉ email mới không hợp lệ (Chỉ hỗ trợ Gmail).',
-                    false,
-                    400
-                );
+        await queryTransaction<void>(async (connection) => {
+            if (email) {
+                await validateEmail(connection, email, true);
 
-            const emailResult = (await query(
-                `SELECT id FROM users WHERE email = ?`,
-                [email]
-            )) as any[];
-            if (emailResult.length)
-                throw new ModelError(
-                    'Địa chỉ email này đã tồn tại.',
-                    false,
-                    400
+                const [getCurrentUserInfoResult] = await connection.execute<
+                    Array<RowDataPacket & { email: string; password: string }>
+                >(
+                    'SELECT users.email, credentials.password FROM users JOIN credentials ON users.username = credentials.username WHERE BINARY users.username = ?',
+                    [username]
                 );
+                if (!getCurrentUserInfoResult.length)
+                    throw new ModelError(
+                        'Không thể truy xuất thông tin đăng nhập người dùng.',
+                        true,
+                        500
+                    );
+                const currentEmail = getCurrentUserInfoResult[0].email,
+                    currentPassword = getCurrentUserInfoResult[0].password;
 
-            const credentialResult = (await query(
-                `SELECT * FROM credentials WHERE username = ?`,
-                [username]
-            )) as any[];
-            if (!!!credentialResult.length)
-                throw new ModelError(
-                    'Không thể truy xuất thông tin đăng nhập người dùng.',
-                    true,
-                    500
-                );
-
-            const currentEmailResult = (await query(
-                `SELECT email FROM users WHERE username = ?`,
-                [username]
-            )) as any[];
-            if (!!!currentEmailResult.length)
-                throw new ModelError(
-                    'Không thể truy xuất thông tin email người dùng.',
-                    true,
-                    500
-                );
-
-            const { password } = credentialResult[0],
-                updateEmailToken = jwt.sign(
+                const updateEmailToken = jwt.sign(
                     {
                         username,
                         newEmail: email,
                     },
-                    `${password}${currentEmailResult[0]?.email}`,
+                    `${currentPassword}${currentEmail}`,
                     {
                         expiresIn: '1h',
                     }
                 );
 
-            const transporter = nodemailer.createTransport({
-                service: 'gmail',
-                host: 'smtp.google.com',
-                port: 465,
-                secure: true,
-                auth: {
-                    user: process.env.NODEMAILER_USER,
-                    pass: process.env.NODEMAILER_APP_PASSWORD,
-                },
-            });
+                const transporter = nodemailer.createTransport({
+                    service: 'gmail',
+                    host: 'smtp.google.com',
+                    port: 465,
+                    secure: true,
+                    auth: {
+                        user: process.env.NODEMAILER_USER,
+                        pass: process.env.NODEMAILER_APP_PASSWORD,
+                    },
+                });
 
-            await transporter.sendMail({
-                from: `no-reply <${process.env.NODEMAILER_USER}>`,
-                to: email,
-                subject: 'Update Email Address',
-                html: `<a href="${process.env.NODEMAILER_DOMAIN}/update-email?token=${updateEmailToken}">Nhấn vào liên kết này để cập nhật địa chỉ email của bạn</a>`,
-            });
-        }
+                await transporter.sendMail({
+                    from: `no-reply <${process.env.NODEMAILER_USER}>`,
+                    to: email,
+                    subject: 'Update Email Address',
+                    html: `<a href="${process.env.NODEMAILER_DOMAIN}/update-email?token=${updateEmailToken}">Nhấn vào liên kết này để cập nhật địa chỉ email của bạn</a>`,
+                });
+            }
+        });
 
         return new ModelResponse(
             'Thông tin tài khoản đã được cập nhật thành công.',
@@ -206,42 +240,38 @@ async function updateEmailAddress(token: string) {
         };
         if (!decoded) throw new ModelError('Token không hợp lệ.', false, 401);
 
-        const credentialResult: any = await query(
-            `SELECT * FROM credentials WHERE username = ?`,
-            [decoded.username]
-        );
-        if (!!!credentialResult.length)
-            throw new ModelError(
-                'Không thể truy xuất thông tin đăng nhập người dùng.',
-                true,
-                500
+        await queryTransaction<void>(async (connection) => {
+            const [getCurrentUserInfoResult] = await connection.execute<
+                Array<RowDataPacket & { email: string; password: string }>
+            >(
+                'SELECT users.email, credentials.password FROM users JOIN credentials ON users.username = credentials.username WHERE BINARY users.username = ?',
+                [decoded.username]
             );
+            if (!getCurrentUserInfoResult.length)
+                throw new ModelError(
+                    'Không thể truy xuất thông tin đăng nhập người dùng.',
+                    true,
+                    500
+                );
 
-        const currentEmailResult = (await query(
-            `SELECT email FROM users WHERE username = ?`,
-            [decoded.username]
-        )) as any[];
-        if (!!!currentEmailResult.length)
-            throw new ModelError(
-                'Không thể truy xuất thông tin email người dùng.',
-                true,
-                500
-            );
+            const currentEmail = getCurrentUserInfoResult[0].email,
+                currentPassword = getCurrentUserInfoResult[0].password;
 
-        if (
-            !jwt.verify(
-                token,
-                `${credentialResult[0].password}${currentEmailResult[0]?.email}`
-            )
-        )
-            throw new ModelError('Token không hợp lệ.', false, 401);
+            if (!jwt.verify(token, `${currentPassword}${currentEmail}`))
+                throw new ModelError('Token không hợp lệ.', false, 401);
 
-        const updateResult: any = await query(
-            `UPDATE users SET email = ? WHERE username = ?`,
-            [decoded.newEmail, decoded.username]
-        );
-        if (!updateResult.affectedRows)
-            throw new ModelError('Cập nhật địa chỉ email thất bại.', true, 500);
+            const [updateEmailResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE users SET email = ? WHERE BINARY username = ?`,
+                    [decoded.newEmail, decoded.username]
+                );
+            if (!updateEmailResult.affectedRows)
+                throw new ModelError(
+                    'Cập nhật địa chỉ email thất bại.',
+                    true,
+                    500
+                );
+        });
 
         return new ModelResponse(
             'Cập nhật địa chỉ email thành công.',
@@ -310,49 +340,42 @@ async function updatePassword(
                 400
             );
 
-        if (newPassword.length < 8 || newPassword.length > 32)
-            throw new ModelError(
-                'Mật khẩu phải có tối thiểu 8 ký tự và tối đa 32 ký tự.',
-                false,
-                400
+        validatePassword(newPassword);
+
+        await queryTransaction<void>(async (connection) => {
+            const [getCredentialResult] = await connection.execute<
+                RowDataPacket[]
+            >('SELECT password FROM credentials WHERE username = ?', [
+                username,
+            ]);
+            if (!getCredentialResult.length)
+                throw new ModelError(
+                    'Mật khẩu hiện tại không chính xác.',
+                    false,
+                    401
+                );
+
+            const compareResult = await bcrypt.compare(
+                currentPassword,
+                getCredentialResult[0].password
             );
+            if (!compareResult)
+                throw new ModelError(
+                    'Mật khẩu hiện tại không chính xác.',
+                    false,
+                    400
+                );
 
-        const credentialsSql = `SELECT c.username, c.password, u.email, u.role
-            FROM credentials c JOIN users u 
-            ON c.username = u.username 
-            WHERE c.username = ?`;
+            const hashedPassword = await hashPassword(newPassword);
 
-        const credentialsResult = (await query(credentialsSql, [
-            username,
-        ])) as any[];
-        if (!!!credentialsResult.length)
-            throw new ModelError(
-                'Mật khẩu hiện tại không chính xác.',
-                false,
-                401
-            );
-
-        const compareResult = await bcrypt.compare(
-            currentPassword,
-            credentialsResult[0].password
-        );
-        if (!compareResult)
-            throw new ModelError(
-                'Mật khẩu hiện tại không chính xác.',
-                false,
-                400
-            );
-
-        const hashResult = await hashPassword(newPassword);
-        if (!hashResult.success)
-            throw new ModelError(hashResult.message, true, 500);
-
-        const updateResult: any = await query(
-            `UPDATE credentials SET password = ? WHERE username = ?`,
-            [hashResult.data.hashedPassword, username]
-        );
-        if (!updateResult.affectedRows)
-            throw new ModelError('Cập nhật mật khẩu thất bại.', true, 500);
+            const [updateCredentialResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE credentials SET password = ? WHERE BINARY username = ?`,
+                    [hashedPassword, username]
+                );
+            if (!updateCredentialResult.affectedRows)
+                throw new ModelError('Cập nhật mật khẩu thất bại.', true, 500);
+        });
 
         return new ModelResponse('Cập nhật mật khẩu thành công.', true, null);
     } catch (error) {
@@ -405,69 +428,75 @@ async function deleteUser(username: string, currentPassword: string) {
                 400
             );
 
-        const credentialResult = (await query(
-            `SELECT password FROM credentials WHERE username = ?`,
-            [username]
-        )) as any[];
-        if (!!!credentialResult?.length)
-            throw new ModelError(
-                `Không tìm thấy thông tin credentials của username.`,
-                true,
-                500
-            );
-
-        const compareResult = await bcrypt.compare(
-            currentPassword,
-            credentialResult[0]?.password
-        );
-        if (!compareResult)
-            throw new ModelError(`Mật khẩu không chính xác.`, false, 400);
-
-        const getAvatarImageResult: any = await query(
-            `SELECT avatarFileName FROM users WHERE username = ?`,
-            [username]
-        );
-        if (!getAvatarImageResult.length)
-            throw new ModelError(
-                `Không tìm thấy người dùng '${username}'.`,
-                false,
-                400
-            );
-
-        const associatedImage =
-                getAvatarImageResult[0].avatarFileName?.match(/[^\/]+$/)[0],
-            associatedImagePath = associatedImage
-                ? path.join(pathGlobal.upload, 'avatar', associatedImage)
-                : null;
-
-        const deleteCredentialResult: any = await query(
-                `DELETE FROM credentials WHERE username = ?`,
-                [username]
-            ),
-            deleteUserResult: any = await query(
-                `DELETE FROM users WHERE username = ?`,
-                [username]
-            );
-        if (
-            !deleteCredentialResult?.affectedRows ||
-            !deleteUserResult?.affectedRows
-        )
-            throw new ModelError(
-                `Có lỗi xảy ra khi xoá thông tin người dùng`,
-                true,
-                500
-            );
-
-        if (associatedImagePath) {
-            try {
-                await fs.unlink(associatedImagePath);
-            } catch (error) {
-                console.error(
-                    'Có lỗi xảy ra khi xoá hình ảnh avatar của người dùng.\n',
-                    error
+        await queryTransaction<void>(async (connection) => {
+            const [getCredentialResult] = await connection.execute<
+                RowDataPacket[]
+            >(`SELECT password FROM credentials WHERE BINARY username = ?`, [
+                username,
+            ]);
+            if (!getCredentialResult?.length)
+                throw new ModelError(
+                    `Không tìm thấy thông tin credentials của người dùng.`,
+                    true,
+                    500
                 );
+
+            const [getAvatarImageResult] = await connection.execute<
+                Array<RowDataPacket & { avatarFileName: string }>
+            >(`SELECT avatarFileName FROM users WHERE BINARY username = ?`, [
+                username,
+            ]);
+            if (!getAvatarImageResult.length)
+                throw new ModelError(
+                    `Không tìm thấy người dùng '${username}'.`,
+                    false,
+                    400
+                );
+
+            const compareResult = await bcrypt.compare(
+                currentPassword,
+                getCredentialResult[0]?.password
+            );
+            if (!compareResult)
+                throw new ModelError(`Mật khẩu không chính xác.`, false, 400);
+
+            const [deleteCredentialResult] =
+                    await connection.execute<ResultSetHeader>(
+                        `DELETE FROM credentials WHERE BINARY username = ?`,
+                        [username]
+                    ),
+                [deleteUserResult] = await connection.execute<ResultSetHeader>(
+                    `DELETE FROM users WHERE BINARY username = ?`,
+                    [username]
+                );
+            if (
+                !deleteCredentialResult?.affectedRows ||
+                !deleteUserResult?.affectedRows
+            )
+                throw new ModelError(
+                    `Có lỗi xảy ra khi xoá thông tin người dùng`,
+                    true,
+                    500
+                );
+
+            const associatedImage =
+                    getAvatarImageResult[0]
+                        .avatarFileName /* ?.match(/[^\/]+$/)[0] */,
+                associatedImagePath = associatedImage
+                    ? path.join(pathGlobal.upload, 'avatar', associatedImage)
+                    : null;
+
+            if (associatedImagePath) {
+                try {
+                    await fs.unlink(associatedImagePath);
+                } catch (error) {
+                    console.error(
+                        'Có lỗi xảy ra khi xoá hình ảnh avatar của người dùng.\n',
+                        error
+                    );
+                }
             }
-        }
+        });
 
         return new ModelResponse('Xoá tài khoản thành công.', true, null);
     } catch (error) {
@@ -485,7 +514,7 @@ async function deleteUser(username: string, currentPassword: string) {
 }
 
 /**
- * Upload user avatar image as admin
+ * Upload user avatar image.
  * @param username Username.
  * @param avatarImage Avatar image.
  * @returns Returns the response object.
@@ -502,17 +531,6 @@ async function uploadUserAvatar(
                 400
             );
 
-        const getUserAvatarFileNameResult: any = await query(
-            `SELECT avatarFileName FROM users WHERE BINARY username = ?`,
-            [username]
-        );
-        if (!getUserAvatarFileNameResult.length)
-            throw new ModelError(
-                `Không tìm thấy người dùng '${username}'.`,
-                false,
-                400
-            );
-
         if (!avatarImage?.mimetype?.includes('image'))
             throw new ModelError(
                 'Định dạng tệp không phải là hình ảnh.',
@@ -520,96 +538,60 @@ async function uploadUserAvatar(
                 400
             );
 
-        let isUploadFolderExist;
-        try {
-            isUploadFolderExist = await fs.readdir(pathGlobal.upload);
-        } catch (error) {
-            isUploadFolderExist = false;
-        }
-        if (!isUploadFolderExist) await fs.mkdir(path.join(pathGlobal.upload));
-
-        let isAvatarFolderExist;
-        try {
-            isAvatarFolderExist = await fs.readdir(
-                path.join(pathGlobal.upload, 'avatar')
-            );
-        } catch (error) {
-            isAvatarFolderExist = false;
-        }
-        if (!isAvatarFolderExist)
-            await fs.mkdir(path.join(path.join(pathGlobal.upload, 'avatar')));
-
-        const tempPath = avatarImage.filepath,
-            newPath = path.join(
-                pathGlobal.upload,
-                'avatar',
-                avatarImage.originalFilename.replace(/\s/g, '')
-            ),
-            rawData = await fs.readFile(tempPath),
-            fileName = path.parse(
-                avatarImage.originalFilename.replace(/\s/g, '')
-            ).name,
-            fileExt = path.parse(
-                avatarImage.originalFilename.replace(/\s/g, '')
-            ).ext;
-
-        let isFileNameAlreadyExist: Buffer | boolean = true,
-            attempt = 0,
-            outputFilePath = newPath;
-        while (isFileNameAlreadyExist) {
-            if (attempt === 3)
+        await queryTransaction<void>(async (connection) => {
+            const [getUserAvatarFileNameResult] = await connection.execute<
+                Array<RowDataPacket & { avatarFileName: string }>
+            >(`SELECT avatarFileName FROM users WHERE BINARY username = ?`, [
+                username,
+            ]);
+            if (!getUserAvatarFileNameResult.length)
                 throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                    true,
+                    `Không tìm thấy người dùng '${username}'.`,
+                    false,
+                    400
+                );
+
+            const imageInsertData =
+                    await generateUserAvatarImageInsertData(avatarImage),
+                newImageFileName = path.parse(imageInsertData.filePath).base;
+
+            const [updateImageFileNameResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE users SET \`avatarFileName\` = ? WHERE BINARY username = ?`,
+                    [newImageFileName, username]
+                );
+            if (!updateImageFileNameResult.affectedRows)
+                throw new ModelError(
+                    `Không tìm thấy người dùng '${username}' khi cập nhật ảnh avatar.`,
+                    false,
                     500
                 );
 
+            const oldImageFileName =
+                getUserAvatarFileNameResult[0]?.avatarFileName;
+            let isOldImageFileExistOnServer;
             try {
-                isFileNameAlreadyExist = await fs.readFile(outputFilePath);
-                outputFilePath = path.join(
-                    pathGlobal.upload,
-                    'avatar',
-                    `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
+                isOldImageFileExistOnServer = await fs.readFile(
+                    path.join(pathGlobal.upload, 'avatar', oldImageFileName)
                 );
             } catch (error) {
-                isFileNameAlreadyExist = null;
+                isOldImageFileExistOnServer = null;
             }
-            attempt++;
-        }
 
-        await fs.writeFile(outputFilePath, rawData);
-        const newImageFileName = path.parse(outputFilePath).base;
-        const updateImageFileNameResult: any = await query(
-            `UPDATE users SET \`avatarFileName\` = ? WHERE BINARY username = ?`,
-            [newImageFileName, username]
-        );
-        if (!updateImageFileNameResult.affectedRows)
-            throw new ModelError(
-                `Không tìm thấy người dùng '${username}' khi cập nhật ảnh avatar.`,
-                false,
-                500
+            await fs.writeFile(
+                imageInsertData.filePath,
+                imageInsertData.fileRawData
             );
 
-        const oldImageFileName = getUserAvatarFileNameResult[0],
-            parsedOldImageFileName =
-                oldImageFileName.avatarFileName?.match(/[^\/]+$/)[0];
-        let isOldImageFileExistOnServer;
-        try {
-            isOldImageFileExistOnServer = await fs.readFile(
-                path.join(pathGlobal.upload, 'avatar', parsedOldImageFileName)
-            );
-        } catch (error) {
-            isOldImageFileExistOnServer = null;
-        }
-
-        if (
-            !!isOldImageFileExistOnServer &&
-            outputFilePath !==
-                path.join(pathGlobal.upload, 'avatar', parsedOldImageFileName)
-        )
-            await fs.unlink(
-                path.join(pathGlobal.upload, 'avatar', parsedOldImageFileName)
-            );
+            if (
+                !!isOldImageFileExistOnServer &&
+                imageInsertData.filePath !==
+                    path.join(pathGlobal.upload, 'avatar', oldImageFileName)
+            )
+                await fs.unlink(
+                    path.join(pathGlobal.upload, 'avatar', oldImageFileName)
+                );
+        });
 
         return new ModelResponse('Tải hình ảnh thành công.', true, null);
     } catch (error) {
@@ -636,37 +618,52 @@ async function getUsersAsAdmin(page: number = 1, itemPerPage: number = 12) {
     try {
         const offset = getOffset(page, itemPerPage);
 
-        const itemsQueryResult = await query(
-                `SELECT username, email, role, avatarFileName, createdAt FROM users LIMIT ?, ?`,
-                [`${offset}`, `${itemPerPage}`]
-            ),
-            users = itemsQueryResult || [];
+        const result = await queryTransaction<{
+            meta: {
+                page: number;
+                itemPerPage: number;
+                totalItems: any;
+                isFirstPage: boolean;
+                isLastPage: boolean;
+                prevPage: string;
+                nextPage: string;
+            };
+            users: any;
+        }>(async (connection) => {
+            const [getUsersResult] = await connection.execute<RowDataPacket[]>(
+                    `SELECT username, email, role, avatarFileName, createdAt FROM users LIMIT ?, ?`,
+                    [`${offset}`, `${itemPerPage}`]
+                ),
+                users = getUsersResult;
 
-        const totalItemsQueryResult = await query(
-                `SELECT COUNT(*) AS total_items from users`
-            ),
-            totalUsers = (totalItemsQueryResult as any[])[0].total_items;
+            const [totalItemsQueryResult] = await connection.execute<
+                    Array<RowDataPacket & { total_items: number }>
+                >(`SELECT COUNT(*) AS total_items from users`),
+                totalUsers = totalItemsQueryResult[0].total_items;
 
-        const prevPage = Math.max(1, page - 1),
-            nextPage = Math.max(
-                1,
-                Math.min(Math.ceil(totalUsers / itemPerPage), page + 1)
-            );
+            const prevPage = Math.max(1, page - 1),
+                nextPage = Math.max(
+                    1,
+                    Math.min(Math.ceil(totalUsers / itemPerPage), page + 1)
+                );
 
-        const meta = {
-            page,
-            itemPerPage,
-            totalItems: totalUsers,
-            isFirstPage: page === 1,
-            isLastPage: page === nextPage,
-            prevPage: `/user?page=${prevPage}&itemPerPage=${itemPerPage}`,
-            nextPage: `/user?page=${nextPage}&itemPerPage=${itemPerPage}`,
-        };
+            const meta = {
+                page,
+                itemPerPage,
+                totalItems: totalUsers,
+                isFirstPage: page === 1,
+                isLastPage: page === nextPage,
+                prevPage: `/user?page=${prevPage}&itemPerPage=${itemPerPage}`,
+                nextPage: `/user?page=${nextPage}&itemPerPage=${itemPerPage}`,
+            };
 
-        return new ModelResponse('Truy xuất dữ liệu thành công.', true, {
-            meta,
-            users,
+            return {
+                meta,
+                users,
+            };
         });
+
+        return new ModelResponse('Truy xuất dữ liệu thành công.', true, result);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
@@ -705,220 +702,61 @@ async function createUserAsAdmin(
                 400
             );
 
-        if (!/^[a-z0-9](\.?[a-z0-9]){5,}@g(oogle)?mail\.com$/.test(email))
+        if (avatarImage && !avatarImage?.mimetype?.includes('image'))
             throw new ModelError(
-                'Địa chỉ email không hợp lệ (Chỉ hỗ trợ Gmail).',
+                'Định dạng tệp không phải là hình ảnh.',
                 false,
                 400
             );
 
-        if (!/^[a-zA-Z0-9]+$/.test(username))
-            throw new ModelError(
-                'Tên tài khoản chứa ký tự không hợp lệ [a-zA-Z0-9].',
-                false,
-                400
-            );
-
-        if (username.length < 6 || username.length > 16)
-            throw new ModelError(
-                'Tên tài khoản phải có tối thiểu 6 ký tự và tối đa 16 ký tự.',
-                false,
-                400
-            );
-
-        if (password.length < 8 || password.length > 32)
-            throw new ModelError(
-                'Mật khẩu phải có tối thiểu 8 ký tự và tối đa 32 ký tự.',
-                false,
-                400
-            );
-
-        const { data: hashResult } = await hashPassword(password),
-            hashedPassword = hashResult.hashedPassword;
-
-        if (avatarImage) {
-            if (avatarImage && !avatarImage?.mimetype?.includes('image'))
+        await queryTransaction<void>(async (connection) => {
+            if (
+                !(await validateUsername(connection, username, true)) ||
+                !validatePassword(password) ||
+                !(await validateEmail(connection, email, true))
+            )
                 throw new ModelError(
-                    'Định dạng tệp không phải là hình ảnh.',
+                    'Thông tin đăng ký không hợp lệ.',
                     false,
                     400
                 );
 
-            let isUploadFolderExist;
-            try {
-                isUploadFolderExist = await fs.readdir(pathGlobal.upload);
-            } catch (error) {
-                isUploadFolderExist = false;
-            }
-            if (!isUploadFolderExist)
-                await fs.mkdir(path.join(pathGlobal.upload));
+            const hashedPassword = await hashPassword(password),
+                imageInsertData =
+                    await generateUserAvatarImageInsertData(avatarImage);
 
-            let isAvatarFolderExist;
-            try {
-                isAvatarFolderExist = await fs.readdir(
-                    path.join(pathGlobal.upload, 'avatar')
+            const [insertUserResult] =
+                await connection.execute<ResultSetHeader>(
+                    `INSERT INTO \`users\` (\`username\`, \`email\`, \`role\`, \`avatarFileName\`) VALUES (?, ?, ?, ?)`,
+                    [username, email, role, imageInsertData?.fileName || null]
                 );
-            } catch (error) {
-                isAvatarFolderExist = false;
-            }
-            if (!isAvatarFolderExist)
-                await fs.mkdir(
-                    path.join(path.join(pathGlobal.upload, 'avatar'))
-                );
-
-            const tempPath = avatarImage.filepath,
-                newPath = path.join(
-                    pathGlobal.upload,
-                    'avatar',
-                    avatarImage.originalFilename.replace(/\s/g, '')
-                ),
-                rawData = await fs.readFile(tempPath),
-                fileName = path.parse(
-                    avatarImage.originalFilename.replace(/\s/g, '')
-                ).name,
-                fileExt = path.parse(
-                    avatarImage.originalFilename.replace(/\s/g, '')
-                ).ext;
-
-            let isFileNameAlreadyExist: Buffer | boolean = true,
-                fileNameGenerateAttempt = 0,
-                outputFilePath = newPath;
-            while (isFileNameAlreadyExist) {
-                if (fileNameGenerateAttempt === 3)
-                    throw new ModelError(
-                        'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                        true,
-                        500
-                    );
-
-                try {
-                    isFileNameAlreadyExist = await fs.readFile(outputFilePath);
-                    outputFilePath = path.join(
-                        pathGlobal.upload,
-                        'avatar',
-                        `${fileName}-${Math.floor(Math.random() * Date.now())}${fileExt}`
-                    );
-                } catch (error) {
-                    isFileNameAlreadyExist = null;
-                }
-                fileNameGenerateAttempt++;
-            }
-
-            await fs.writeFile(outputFilePath, rawData);
-
-            const imageFileName = path.parse(outputFilePath).base;
-            try {
-                await queryTransaction(async (connection) => {
-                    const [usernameDuplicateResult] = (await connection.execute(
-                        `SELECT id FROM \`users\` WHERE username = ?`,
-                        [username]
-                    )) as Array<any>;
-                    if (usernameDuplicateResult.length)
-                        throw new ModelError(
-                            'Tên người dùng này đã tồn tại.',
-                            false,
-                            400
-                        );
-
-                    const [emailDuplicateResult] = (await connection.execute(
-                        `SELECT id FROM \`users\` WHERE email = ?`,
-                        [email]
-                    )) as Array<any>;
-                    if (emailDuplicateResult.length)
-                        throw new ModelError(
-                            'Địa chỉ email này đã tồn tại.',
-                            false,
-                            400
-                        );
-
-                    const [insertUserResult] = (await connection.execute(
-                        `INSERT INTO \`users\` (\`username\`, \`email\`, \`role\`, \`avatarFileName\`) VALUES (?, ?, ?, ?)`,
-                        [username, email, role, imageFileName]
-                    )) as Array<any>;
-                    if (!insertUserResult.affectedRows)
-                        throw new ModelError(
-                            'Cập nhật người dùng vào cơ sở dữ liệu thất bại (users).',
-                            true,
-                            500
-                        );
-
-                    const [insertCredentialsResult] = (await connection.execute(
-                        `INSERT INTO \`credentials\` (\`password\`, \`username\`) VALUES (?, ?)`,
-                        [hashedPassword, username]
-                    )) as Array<any>;
-                    if (!insertCredentialsResult.affectedRows)
-                        throw new ModelError(
-                            'Cập nhật người dùng vào cơ sở dữ liệu thất bại (credentials).',
-                            true,
-                            500
-                        );
-                    return insertCredentialsResult;
-                });
-
-                return new ModelResponse(
-                    'Tạo người dùng thành công.',
-                    true,
-                    null
-                );
-            } catch (error) {
-                await fs.unlink(path.join(outputFilePath));
-
+            if (!insertUserResult.affectedRows)
                 throw new ModelError(
-                    'Thêm người dùng vào cơ sở dữ liệu thất bại (users).',
+                    'Cập nhật người dùng vào cơ sở dữ liệu thất bại (users).',
                     true,
                     500
                 );
-            }
-        } else {
-            await queryTransaction(async (connection) => {
-                const [usernameDuplicateResult] = (await connection.execute(
-                    `SELECT id FROM \`users\` WHERE BINARY username = ?`,
-                    [username]
-                )) as Array<any>;
-                if (usernameDuplicateResult.length)
-                    throw new ModelError(
-                        'Tên người dùng này đã tồn tại.',
-                        false,
-                        400
-                    );
 
-                const [emailDuplicateResult] = (await connection.execute(
-                    `SELECT id FROM \`users\` WHERE BINARY email = ?`,
-                    [email]
-                )) as Array<any>;
-                if (emailDuplicateResult.length)
-                    throw new ModelError(
-                        'Địa chỉ email này đã tồn tại.',
-                        false,
-                        400
-                    );
-
-                const [insertUserResult] = (await connection.execute(
-                    `INSERT INTO \`users\` (\`username\`, \`email\`, \`role\`) VALUES (?, ?, ?)`,
-                    [username, email, role]
-                )) as Array<any>;
-                if (!insertUserResult.affectedRows)
-                    throw new ModelError(
-                        'Cập nhật người dùng vào cơ sở dữ liệu thất bại (users).',
-                        true,
-                        500
-                    );
-
-                const [insertCredentialsResult] = (await connection.execute(
+            const [insertCredentialsResult] =
+                await connection.execute<ResultSetHeader>(
                     `INSERT INTO \`credentials\` (\`password\`, \`username\`) VALUES (?, ?)`,
                     [hashedPassword, username]
-                )) as Array<any>;
-                if (!insertCredentialsResult.affectedRows)
-                    throw new ModelError(
-                        'Cập nhật người dùng vào cơ sở dữ liệu thất bại (credentials).',
-                        true,
-                        500
-                    );
-                return insertCredentialsResult;
-            });
+                );
+            if (!insertCredentialsResult.affectedRows)
+                throw new ModelError(
+                    'Cập nhật người dùng vào cơ sở dữ liệu thất bại (credentials).',
+                    true,
+                    500
+                );
 
-            return new ModelResponse('Tạo người dùng thành công.', true, null);
-        }
+            if (imageInsertData)
+                await fs.writeFile(
+                    imageInsertData.filePath,
+                    imageInsertData.fileRawData
+                );
+        });
+
+        return new ModelResponse('Tạo người dùng thành công.', true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
@@ -956,80 +794,44 @@ async function updateUserAsAdmin(
                 400
             );
 
-        if (
-            email &&
-            !/^[a-z0-9](\.?[a-z0-9]){5,}@g(oogle)?mail\.com$/.test(email)
-        )
-            throw new ModelError(
-                'Địa chỉ email không hợp lệ (Chỉ hỗ trợ Gmail).',
-                false,
-                400
-            );
-
-        if (username && !/^[a-zA-Z0-9]+$/.test(username))
-            throw new ModelError(
-                'Tên tài khoản chứa ký tự không hợp lệ [a-zA-Z0-9].',
-                false,
-                400
-            );
-
-        if (
-            (username && username.length < 6) ||
-            (username && username.length > 16)
-        )
-            throw new ModelError(
-                'Tên tài khoản phải có tối thiểu 6 ký tự và tối đa 16 ký tự.',
-                false,
-                400
-            );
-
-        if (
-            (password && password.length < 8) ||
-            (password && password.length > 32)
-        )
-            throw new ModelError(
-                'Mật khẩu phải có tối thiểu 8 ký tự và tối đa 32 ký tự.',
-                false,
-                400
-            );
-
-        let hashedPassword: string;
-        if (password) {
-            const { data: hashResult } = await hashPassword(password);
-            hashedPassword = hashResult.hashedPassword;
-        }
-
-        await queryTransaction(async (connection) => {
-            const [currentUserResult] = (await connection.execute(
-                `SELECT * FROM \`users\` WHERE BINARY username = ?`,
+        await queryTransaction<void>(async (connection) => {
+            const [getCurrentUserInfoResult] = await connection.execute<
+                Array<
+                    RowDataPacket & {
+                        username: string;
+                        email: string;
+                        role: string;
+                    }
+                >
+            >(
+                'SELECT username, email, role FROM `users` WHERE BINARY username = ?',
                 [targetUsername]
-            )) as Array<any>;
-            if (!currentUserResult.length)
+            );
+            if (!getCurrentUserInfoResult.length)
                 throw new ModelError(
                     `Không tìm thấy người dùng '${targetUsername}'`,
                     false,
                     400
                 );
 
-            if (username && currentUserResult[0].username !== username) {
-                const [usernameDuplicateResult] = (await connection.execute(
-                    `SELECT id FROM \`users\` WHERE BINARY username = ?`,
-                    [username]
-                )) as Array<any>;
-                if (usernameDuplicateResult.length)
+            const currentUsername = getCurrentUserInfoResult[0].username,
+                currentEmail = getCurrentUserInfoResult[0].email,
+                currentRole = getCurrentUserInfoResult[0].role;
+
+            if (email && email !== currentEmail) {
+                if (!(await validateEmail(connection, email, false)))
                     throw new ModelError(
-                        'Tên người dùng này đã tồn tại.',
+                        'Thông tin cập nhật không hợp lệ.',
                         false,
                         400
                     );
-            }
-
-            if (email && currentUserResult[0].email !== email) {
-                const [emailDuplicateResult] = (await connection.execute(
-                    `SELECT id FROM \`users\` WHERE BINARY email = ?`,
+                const [checkDuplicateResult] = await connection.execute<
+                    Array<RowDataPacket & { count: number }>
+                >(
+                    'SELECT COUNT(*) as count FROM users WHERE BINARY email = ?',
                     [email]
-                )) as Array<any>;
-                if (emailDuplicateResult.length)
+                );
+                if (checkDuplicateResult[0].count)
                     throw new ModelError(
                         'Địa chỉ email này đã tồn tại.',
                         false,
@@ -1037,15 +839,37 @@ async function updateUserAsAdmin(
                     );
             }
 
-            const [updateUserResult] = (await connection.execute(
-                `UPDATE \`users\` SET \`username\` = ?, \`email\` = ?, \`role\` = ? WHERE BINARY \`username\` = ?`,
-                [
-                    username || currentUserResult[0].username,
-                    email || currentUserResult[0].email,
-                    role || currentUserResult[0].role,
-                    targetUsername,
-                ]
-            )) as Array<any>;
+            if (username && username !== currentUsername) {
+                if (!(await validateUsername(connection, username, false)))
+                    throw new ModelError(
+                        'Thông tin cập nhật không hợp lệ.',
+                        false,
+                        400
+                    );
+                const [checkDuplicateResult] = await connection.execute<
+                    Array<RowDataPacket & { count: number }>
+                >(
+                    'SELECT COUNT(*) as count FROM users WHERE BINARY username = ?',
+                    [username]
+                );
+                if (checkDuplicateResult[0].count)
+                    throw new ModelError(
+                        'Tên người dùng này đã tồn tại.',
+                        false,
+                        400
+                    );
+            }
+
+            const [updateUserResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE \`users\` SET \`username\` = ?, \`email\` = ?, \`role\` = ? WHERE BINARY \`username\` = ?`,
+                    [
+                        username || currentUsername,
+                        email || currentEmail,
+                        role || currentRole,
+                        targetUsername,
+                    ]
+                );
             if (!updateUserResult.affectedRows)
                 throw new ModelError(
                     'Cập nhật người dùng thất bại (users).',
@@ -1054,10 +878,20 @@ async function updateUserAsAdmin(
                 );
 
             if (password) {
-                const [updateCredentialsResult] = (await connection.execute(
-                    `UPDATE \`credentials\` SET \`password\` = ? WHERE BINARY username = ?`,
-                    [hashedPassword, username]
-                )) as Array<any>;
+                if (!validatePassword(password))
+                    throw new ModelError(
+                        'Thông tin cập nhật không hợp lệ.',
+                        false,
+                        400
+                    );
+
+                const hashedPassword = await hashPassword(password);
+
+                const [updateCredentialsResult] =
+                    await connection.execute<ResultSetHeader>(
+                        `UPDATE \`credentials\` SET \`password\` = ? WHERE BINARY username = ?`,
+                        [hashedPassword, username || currentUsername]
+                    );
                 if (!updateCredentialsResult.affectedRows)
                     throw new ModelError(
                         'Cập nhật người dùng thất bại (credentials).',
@@ -1065,8 +899,6 @@ async function updateUserAsAdmin(
                         500
                     );
             }
-
-            return updateUserResult;
         });
 
         return new ModelResponse('Cập nhật người dùng thành công.', true, null);
@@ -1083,6 +915,7 @@ async function updateUserAsAdmin(
         );
     }
 }
+
 /**
  * Delete user as admin.
  * @param username Username.
@@ -1093,51 +926,60 @@ async function deleteUserAsAdmin(username: string) {
         if (!username)
             throw new ModelError(`Thông tin 'username' bị thiếu.`, false, 400);
 
-        const getAvatarImageResult: any = await query(
-            `SELECT avatarFileName FROM users WHERE BINARY username = ?`,
-            [username]
-        );
-        if (!getAvatarImageResult.length)
-            throw new ModelError(
-                `Không tìm thấy người dùng '${username}'.`,
-                false,
-                400
-            );
-
-        const associatedImage =
-                getAvatarImageResult[0].avatarFileName?.match(/[^\/]+$/)[0],
-            associatedImagePath = associatedImage
-                ? path.join(pathGlobal.upload, 'avatar', associatedImage)
-                : null;
-
-        const deleteCredentialResult: any = await query(
-                `DELETE FROM credentials WHERE username = ?`,
-                [username]
-            ),
-            deleteUserResult: any = await query(
-                `DELETE FROM users WHERE username = ?`,
-                [username]
-            );
-        if (
-            !deleteCredentialResult?.affectedRows ||
-            !deleteUserResult?.affectedRows
-        )
-            throw new ModelError(
-                `Có lỗi xảy ra khi xoá thông tin người dùng`,
-                true,
-                500
-            );
-
-        if (associatedImagePath) {
-            try {
-                await fs.unlink(associatedImagePath);
-            } catch (error) {
-                console.error(
-                    'Có lỗi xảy ra khi xoá hình ảnh avatar của người dùng.\n',
-                    error
+        await queryTransaction<void>(async (connection) => {
+            const [getAvatarImageResult] = await connection.execute<
+                Array<
+                    RowDataPacket & {
+                        avatarFileName: string;
+                    }
+                >
+            >(`SELECT avatarFileName FROM users WHERE BINARY username = ?`, [
+                username,
+            ]);
+            if (!getAvatarImageResult.length)
+                throw new ModelError(
+                    `Không tìm thấy người dùng '${username}'.`,
+                    false,
+                    400
                 );
+
+            const [deleteCredentialResult] =
+                    await connection.execute<ResultSetHeader>(
+                        `DELETE FROM credentials WHERE BINARY username = ?`,
+                        [username]
+                    ),
+                [deleteUserResult] = await connection.execute<ResultSetHeader>(
+                    `DELETE FROM users WHERE BINARY username = ?`,
+                    [username]
+                );
+            if (
+                !deleteCredentialResult?.affectedRows ||
+                !deleteUserResult?.affectedRows
+            )
+                throw new ModelError(
+                    `Có lỗi xảy ra khi xoá thông tin người dùng`,
+                    true,
+                    500
+                );
+
+            const associatedImage =
+                    getAvatarImageResult[0]
+                        .avatarFileName /* ?.match(/[^\/]+$/)[0] */,
+                associatedImagePath = associatedImage
+                    ? path.join(pathGlobal.upload, 'avatar', associatedImage)
+                    : null;
+
+            if (associatedImagePath) {
+                try {
+                    await fs.unlink(associatedImagePath);
+                } catch (error) {
+                    console.error(
+                        'Có lỗi xảy ra khi xoá hình ảnh avatar của người dùng.\n',
+                        error
+                    );
+                }
             }
-        }
+        });
 
         return new ModelResponse('Xoá người dùng thành công.', true, null);
     } catch (error) {

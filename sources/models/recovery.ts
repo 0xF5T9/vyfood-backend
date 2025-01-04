@@ -4,41 +4,16 @@
  */
 
 'use strict';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import nodemailer from 'nodemailer';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
 
-import { query } from '@sources/services/database';
-import { ModelError, ModelResponse } from '@sources/utility/model';
-
-/**
- * Hash password using bcrypt.
- * @param password Password string.
- * @param saltRounds Salt rounds. (default: 10)
- * @returns Returns the response object.
- */
-async function hashPassword(password: string, saltRounds: number = 10) {
-    try {
-        const salt = await bcrypt.genSalt(saltRounds),
-            hashedPassword = await bcrypt.hash(password, salt);
-
-        return new ModelResponse('Băm mật khẩu thành công.', true, {
-            generatedSalt: salt,
-            hashedPassword,
-        });
-    } catch (error) {
-        console.error(error);
-        if (error.isServerError === undefined) error.isServerError = true;
-
-        return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
-            false,
-            null,
-            error.isServerError,
-            error.statusCode
-        );
-    }
-}
+import { queryTransaction } from '@sources/services/database';
+import {
+    ModelError,
+    ModelResponse,
+    hashPassword,
+} from '@sources/utility/model';
 
 /**
  * Forgot password.
@@ -61,55 +36,53 @@ async function forgotPassword(email: string) {
                 400
             );
 
-        const userResult: any = await query(
-            `SELECT * FROM users WHERE email = ?`,
-            [email]
-        );
-        if (!!!userResult.length)
-            return new ModelResponse(
-                'Kiểm tra email của bạn để đặt lại mật khẩu.',
-                true,
-                null
+        await queryTransaction<void>(async (connection) => {
+            const [getUserResult] = await connection.execute<RowDataPacket[]>(
+                `SELECT * FROM users WHERE email = ?`,
+                [email]
             );
+            if (!getUserResult.length) return; // Send fake response.
 
-        const credentialResult: any = await query(
-            `SELECT * FROM credentials WHERE username = ?`,
-            [userResult[0].username]
-        );
-        if (!!!credentialResult.length)
-            throw new ModelError(
-                'Không thể truy xuất thông tin đăng nhập người dùng.',
-                true,
-                500
-            );
+            const [getCredentialResult] = await connection.execute<
+                Array<RowDataPacket & { username: string; password: string }>
+            >(`SELECT * FROM credentials WHERE BINARY username = ?`, [
+                getUserResult[0].username,
+            ]);
+            if (!getCredentialResult.length)
+                throw new ModelError(
+                    'Không thể truy xuất thông tin đăng nhập người dùng.',
+                    true,
+                    500
+                );
 
-        const { username, password } = credentialResult[0],
-            resetToken = jwt.sign(
-                {
-                    username,
+            const { username, password } = getCredentialResult[0],
+                resetToken = jwt.sign(
+                    {
+                        username,
+                    },
+                    password,
+                    {
+                        expiresIn: '1h',
+                    }
+                );
+
+            const transporter = nodemailer.createTransport({
+                service: 'gmail',
+                host: 'smtp.google.com',
+                port: 465,
+                secure: true,
+                auth: {
+                    user: process.env.NODEMAILER_USER,
+                    pass: process.env.NODEMAILER_APP_PASSWORD,
                 },
-                password,
-                {
-                    expiresIn: '1h',
-                }
-            );
+            });
 
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            host: 'smtp.google.com',
-            port: 465,
-            secure: true,
-            auth: {
-                user: process.env.NODEMAILER_USER,
-                pass: process.env.NODEMAILER_APP_PASSWORD,
-            },
-        });
-
-        await transporter.sendMail({
-            from: `no-reply <${process.env.NODEMAILER_USER}>`,
-            to: email,
-            subject: 'Update Email Address',
-            html: `<a href="${process.env.NODEMAILER_DOMAIN}/reset-password?token=${resetToken}">Nhấn vào liên kết này để khôi phục tài khoản của bạn</a>`,
+            await transporter.sendMail({
+                from: `no-reply <${process.env.NODEMAILER_USER}>`,
+                to: email,
+                subject: 'Update Email Address',
+                html: `<a href="${process.env.NODEMAILER_DOMAIN}/reset-password?token=${resetToken}">Nhấn vào liên kết này để khôi phục tài khoản của bạn</a>`,
+            });
         });
 
         return new ModelResponse(
@@ -160,33 +133,36 @@ async function resetPassword(token: string, newPassword: string) {
                 400
             );
 
-        const decoded: any = jwt.decode(token);
-        if (!decoded) throw new ModelError('Token không hợp lệ.', false, 401);
+        await queryTransaction<void>(async (connection) => {
+            const decoded = jwt.decode(token) as { username: string };
+            if (!decoded)
+                throw new ModelError('Token không hợp lệ.', false, 401);
 
-        const credentialResult: any = await query(
-            `SELECT * FROM credentials WHERE username = ?`,
-            [decoded.username]
-        );
-        if (!!!credentialResult.length)
-            throw new ModelError(
-                'Không thể truy xuất thông tin đăng nhập người dùng.',
-                true,
-                500
-            );
+            const [getCredentialResult] = await connection.execute<
+                Array<RowDataPacket & { password: string }>
+            >(`SELECT password FROM credentials WHERE BINARY username = ?`, [
+                decoded.username,
+            ]);
+            if (!getCredentialResult.length)
+                throw new ModelError(
+                    'Không thể truy xuất thông tin đăng nhập người dùng.',
+                    true,
+                    500
+                );
 
-        if (!jwt.verify(token, credentialResult[0].password))
-            throw new ModelError('Token không hợp lệ.', false, 401);
+            if (!jwt.verify(token, getCredentialResult[0].password))
+                throw new ModelError('Token không hợp lệ.', false, 401);
 
-        const hashResult = await hashPassword(newPassword);
-        if (!hashResult.success)
-            throw new ModelError(hashResult.message, true, 500);
+            const hashedPassword = await hashPassword(newPassword);
 
-        const updateResult: any = await query(
-            `UPDATE credentials SET password = ? WHERE username = ?`,
-            [hashResult.data.hashedPassword, decoded.username]
-        );
-        if (!updateResult.affectedRows)
-            throw new ModelError('Cập nhật mật khẩu thất bại.', true, 500);
+            const [updateCredentialResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE credentials SET password = ? WHERE BINARY username = ?`,
+                    [hashedPassword, decoded.username]
+                );
+            if (!updateCredentialResult.affectedRows)
+                throw new ModelError('Cập nhật mật khẩu thất bại.', true, 500);
+        });
 
         return new ModelResponse('Cập nhật mật khẩu thành công.', true, null);
     } catch (error) {

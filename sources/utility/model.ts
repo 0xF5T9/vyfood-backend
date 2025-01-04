@@ -4,6 +4,8 @@
  */
 
 'use strict';
+import type { RowDataPacket, PoolConnection } from 'mysql2/promise';
+import bcrypt from 'bcrypt';
 import slugify from 'slugify';
 
 /**
@@ -134,6 +136,109 @@ function toSlug(string: string, locale = 'vi') {
     });
 }
 
+/**
+ * Check if username is valid.
+ * @param connection The mysql pool connection instance.
+ * @param username The username to be checked.
+ * @param duplicateCheck Specifies whether to check if the username is already used.
+ * @returns Returns true if the username is valid, otherwise returns false.
+ * @note This function is meant to be called in a transaction context.
+ */
+async function validateUsername(
+    connection: PoolConnection,
+    username: string,
+    duplicateCheck: boolean = false
+): Promise<boolean> {
+    if (!/^[a-z0-9]+$/.test(username))
+        throw new ModelError(
+            'Tên tài khoản chứa ký tự không hợp lệ [a-z0-9].',
+            false,
+            400
+        );
+
+    if (username.length < 6 || username.length > 16)
+        throw new ModelError(
+            'Tên tài khoản phải có tối thiểu 6 ký tự và tối đa 16 ký tự.',
+            false,
+            400
+        );
+
+    if (duplicateCheck) {
+        const [result] = await connection.execute<
+            Array<RowDataPacket & { count: string }>
+        >('SELECT COUNT(*) AS `count` FROM users WHERE username = ?', [
+            username,
+        ]);
+        if (!!result[0].count)
+            throw new ModelError('Tên người dùng này đã tồn tại.', false, 400);
+    }
+
+    return true;
+}
+
+/**
+ * Check if email is valid.
+ * @param connection The mysql pool connection instance.
+ * @param email The email to be checked.
+ * @param duplicateCheck Specifies whether to check if the email is already used.
+ * @returns Returns true if the email is valid, otherwise returns false.
+ * @note This function is meant to be called in a transaction context.
+ */
+async function validateEmail(
+    connection: PoolConnection,
+    email: string,
+    duplicateCheck: boolean = false
+): Promise<boolean> {
+    if (!/^[a-z0-9](\.?[a-z0-9]){5,}@g(oogle)?mail\.com$/.test(email))
+        throw new ModelError(
+            'Địa chỉ email không hợp lệ (Chỉ hỗ trợ Gmail).',
+            false,
+            400
+        );
+
+    if (duplicateCheck) {
+        const [result] = await connection.execute<
+            Array<RowDataPacket & { count: string }>
+        >('SELECT COUNT(*) AS `count` FROM users WHERE email = ?', [email]);
+        if (!!result[0].count)
+            throw new ModelError('Địa chỉ email này đã tồn tại.', false, 400);
+    }
+
+    return true;
+}
+
+/**
+ * Check if password is valid.
+ * @param password The password to be checked.
+ * @returns Returns true if the password is valid, otherwise returns false.
+ */
+function validatePassword(password: string): boolean {
+    if (password.length < 8 || password.length > 32)
+        throw new ModelError(
+            'Mật khẩu phải có tối thiểu 8 ký tự và tối đa 32 ký tự.',
+            false,
+            400
+        );
+
+    return true;
+}
+
+/**
+ * Hash password using bcrypt.
+ * @param password Password string.
+ * @param saltRounds Salt rounds. (default: 10)
+ * @returns Returns the hashed password.
+ */
+async function hashPassword(
+    password: string,
+    saltRounds: number = 10
+): Promise<string> {
+    const salt = await bcrypt.genSalt(saltRounds),
+        hashedPassword = await bcrypt.hash(password, salt);
+
+    return hashedPassword;
+}
+
 export {
     ModelError,
     ModelResponse,
@@ -141,4 +246,8 @@ export {
     isValidDate,
     toSQLTimestamp,
     toSlug,
+    validateUsername,
+    validatePassword,
+    validateEmail,
+    hashPassword,
 };

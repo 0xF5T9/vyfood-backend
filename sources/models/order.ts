@@ -5,7 +5,8 @@
 
 'use strict';
 
-import { query, queryTransaction } from '@sources/services/database';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import { queryTransaction } from '@sources/services/database';
 import {
     ModelError,
     ModelResponse,
@@ -31,6 +32,20 @@ type CartItem = {
     note: string;
 };
 
+type RawOrder = {
+    orderId: number;
+    deliveryMethod: 'shipping' | 'pickup';
+    deliveryAddress: string;
+    deliveryTime: string;
+    pickupAt: string;
+    deliveryNote: string;
+    customerName: string;
+    customerPhoneNumber: string;
+    items: CartItem[];
+    status: 'processing' | 'completed' | 'aborted';
+    createdAt: string;
+};
+
 /**
  * Get orders.
  * @param page Pagination.
@@ -41,37 +56,51 @@ async function getOrders(page: number = 1, itemPerPage: number = 12) {
     try {
         const offset = getOffset(page, itemPerPage);
 
-        const itemsQueryResult = await query(
-                `SELECT orderId, deliveryMethod, deliveryAddress, deliveryTime, pickupAt, deliveryNote, customerName, customerPhoneNumber, items, status, createdAt FROM orders LIMIT ?, ?`,
-                [`${offset}`, `${itemPerPage}`]
-            ),
-            orders = itemsQueryResult || [];
+        const result = await queryTransaction<{
+            meta: {
+                page: number;
+                itemPerPage: number;
+                totalItems: any;
+                isFirstPage: boolean;
+                isLastPage: boolean;
+                prevPage: string;
+                nextPage: string;
+            };
+            orders: RawOrder[];
+        }>(async (connection) => {
+            const [itemsQueryResult] = await connection.execute<
+                    Array<RowDataPacket & RawOrder>
+                >(
+                    `SELECT orderId, deliveryMethod, deliveryAddress, deliveryTime, pickupAt, deliveryNote, customerName, customerPhoneNumber, items, status, createdAt FROM orders LIMIT ?, ?`,
+                    [`${offset}`, `${itemPerPage}`]
+                ),
+                orders = itemsQueryResult || [];
 
-        const totalItemsQueryResult = await query(
-                `SELECT COUNT(*) AS total_items from \`orders\``
-            ),
-            totalOrders = (totalItemsQueryResult as any[])[0].total_items;
+            const [totalItemsQueryResult] = await connection.execute<
+                    Array<RowDataPacket & { total_items: number }>
+                >(`SELECT COUNT(*) AS total_items from \`orders\``),
+                totalOrders = totalItemsQueryResult[0].total_items;
 
-        const prevPage = Math.max(1, page - 1),
-            nextPage = Math.max(
-                1,
-                Math.min(Math.ceil(totalOrders / itemPerPage), page + 1)
-            );
+            const prevPage = Math.max(1, page - 1),
+                nextPage = Math.max(
+                    1,
+                    Math.min(Math.ceil(totalOrders / itemPerPage), page + 1)
+                );
 
-        const meta = {
-            page,
-            itemPerPage,
-            totalItems: totalOrders,
-            isFirstPage: page === 1,
-            isLastPage: page === nextPage,
-            prevPage: `/order?page=${prevPage}&itemPerPage=${itemPerPage}`,
-            nextPage: `/order?page=${nextPage}&itemPerPage=${itemPerPage}`,
-        };
+            const meta = {
+                page,
+                itemPerPage,
+                totalItems: totalOrders,
+                isFirstPage: page === 1,
+                isLastPage: page === nextPage,
+                prevPage: `/order?page=${prevPage}&itemPerPage=${itemPerPage}`,
+                nextPage: `/order?page=${nextPage}&itemPerPage=${itemPerPage}`,
+            };
 
-        return new ModelResponse('Truy xuất dữ liệu thành công.', true, {
-            meta,
-            orders,
+            return { meta, orders: orders };
         });
+
+        return new ModelResponse('Truy xuất dữ liệu thành công.', true, result);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
@@ -136,25 +165,29 @@ async function createOrder(
         if (!Array.isArray(items) || !items.length)
             throw new ModelError(`Thông tin 'items' không hợp lệ.`, false, 400);
 
-        await queryTransaction(async (connection) => {
+        await queryTransaction<void>(async (connection) => {
             // Reject the request if the cart product items information is not matches the
             // information in the database.
             const sqlCondition = items?.map(() => `slug = ?`).join(' OR '),
                 params = items?.map((item) => item?.product?.slug);
-            const [getProductsResult] = (await connection.execute(
+            const [getProductsResult] = await connection.execute<
+                RowDataPacket[]
+            >(
                 `SELECT \`slug\`, \`price\`, \`quantity\` FROM \`products\` WHERE ${sqlCondition}`,
                 params
-            )) as Array<Array<any>>;
+            );
             const mappedProducts = getProductsResult?.reduce((acc, product) => {
                 acc[product?.slug] = product;
                 return acc;
-            }, {});
+            }, {} as RowDataPacket);
 
             for (let i = 0; i < items.length; i++) {
-                const [currentQuantityResult] = (await connection.execute(
+                const [currentQuantityResult] = await connection.execute<
+                    RowDataPacket[]
+                >(
                     `SELECT \`quantity\` FROM \`products\` WHERE BINARY \`slug\` = ?`,
                     [items[i].product.slug]
-                )) as Array<any>;
+                );
                 if (!currentQuantityResult.length)
                     throw new ModelError(
                         'Thông tin đơn hàng cần được cập nhật mới.',
@@ -170,10 +203,11 @@ async function createOrder(
                         false,
                         409
                     );
-                const [updateItemQuantity] = (await connection.execute(
-                    `UPDATE \`products\` SET \`quantity\` = ? WHERE BINARY slug = ?`,
-                    [`${newQuantity}`, items[i].product.slug]
-                )) as Array<any>;
+                const [updateItemQuantity] =
+                    await connection.execute<ResultSetHeader>(
+                        `UPDATE \`products\` SET \`quantity\` = ? WHERE BINARY slug = ?`,
+                        [`${newQuantity}`, items[i].product.slug]
+                    );
                 if (!updateItemQuantity.affectedRows)
                     throw new ModelError(
                         'Cập nhật số lượng hàng thất bại (products).',
@@ -196,9 +230,9 @@ async function createOrder(
                 return true;
             });
 
-            const [selectResult] = (await connection.execute(
+            const [selectResult] = await connection.execute<RowDataPacket[]>(
                 `SELECT COALESCE(MAX(\`orderId\`), 0) + 1 AS \`newUniqueId\` FROM \`orders\``
-            )) as Array<any>;
+            );
             if (!selectResult?.length)
                 throw new ModelError(
                     `Có lỗi xảy ra khi cố gắng tạo id cho đơn hàng.`,
@@ -207,7 +241,7 @@ async function createOrder(
                 );
             const newUniqueId = selectResult[0]?.newUniqueId;
 
-            const [insertResult] = (await connection.execute(
+            const [insertResult] = await connection.execute<ResultSetHeader>(
                 `
                 INSERT INTO orders ( \`orderId\`, \`deliveryMethod\`, \`deliveryAddress\`, \`deliveryTime\`, \`deliveryNote\`, \`pickupAt\`, \`customerName\`, \`customerPhoneNumber\`, \`items\` )
                 VALUES
@@ -224,15 +258,13 @@ async function createOrder(
                     customerPhoneNumber,
                     JSON.stringify(items),
                 ]
-            )) as Array<any>;
+            );
             if (!insertResult.affectedRows)
                 throw new ModelError(
                     'Thêm đơn hàng vào cơ sở dữ liệu thất bại (orders).',
                     true,
                     500
                 );
-
-            return insertResult;
         });
 
         return new ModelResponse('Thành công.', true, null);
@@ -286,26 +318,25 @@ async function updateOrder(
                 );
         }
 
-        await queryTransaction(async (connection) => {
-            const [orderResult] = (await connection.execute(
+        await queryTransaction<void>(async (connection) => {
+            const [orderResult] = await connection.execute<RowDataPacket[]>(
                 `SELECT \`orderId\` FROM \`orders\` WHERE \`orderId\` = ?`,
                 [`${orderId}`]
-            )) as Array<any>;
+            );
             if (!orderResult.length)
                 throw new ModelError('Đơn hàng không tồn tại.', false, 400);
 
-            const [patchOrderResult] = (await connection.execute(
-                `UPDATE \`orders\` SET \`status\` = '${status}' WHERE \`orderId\` = ?`,
-                [`${orderId}`]
-            )) as Array<any>;
+            const [patchOrderResult] =
+                await connection.execute<ResultSetHeader>(
+                    `UPDATE \`orders\` SET \`status\` = '${status}' WHERE \`orderId\` = ?`,
+                    [`${orderId}`]
+                );
             if (!patchOrderResult.affectedRows)
                 throw new ModelError(
                     'Có lỗi xảy ra khi cập nhật dữ liệu đơn hàng.',
                     true,
                     500
                 );
-
-            return orderResult;
         });
 
         return new ModelResponse('Thành công.', true, null);
@@ -333,11 +364,11 @@ async function deleteOrder(orderId: number) {
         if (!orderId)
             throw new ModelError(`Thông tin 'orderId' bị thiếu.`, false, 400);
 
-        await queryTransaction(async (connection) => {
-            const [orderResult] = (await connection.execute(
+        await queryTransaction<void>(async (connection) => {
+            const [orderResult] = await connection.execute<RowDataPacket[]>(
                 `SELECT \`id\` FROM \`orders\` WHERE \`orderId\` = ?`,
                 [`${orderId}`]
-            )) as Array<any>;
+            );
             if (!orderResult.length)
                 throw new ModelError(
                     `Đơn hàng '${orderId}' không tồn tại.`,
@@ -345,18 +376,17 @@ async function deleteOrder(orderId: number) {
                     400
                 );
 
-            const [deleteOrderResult] = (await connection.execute(
-                `DELETE FROM \`orders\` WHERE \`orderId\` = ?`,
-                [`${orderId}`]
-            )) as Array<any>;
+            const [deleteOrderResult] =
+                await connection.execute<ResultSetHeader>(
+                    `DELETE FROM \`orders\` WHERE \`orderId\` = ?`,
+                    [`${orderId}`]
+                );
             if (!deleteOrderResult?.affectedRows)
                 throw new ModelError(
                     `Có lỗi xảy ra khi xoá đơn hàng.`,
                     true,
                     500
                 );
-
-            return deleteOrderResult;
         });
 
         return new ModelResponse('Xoá đơn hàng thành công.', true, null);
@@ -384,11 +414,11 @@ async function restoreProductQuantity(orderId: number) {
         if (!orderId)
             throw new ModelError(`Thông tin 'orderId' bị thiếu.`, false, 400);
 
-        await queryTransaction(async (connection) => {
-            const [getOrderResult] = (await connection.execute(
+        await queryTransaction<void>(async (connection) => {
+            const [getOrderResult] = await connection.execute<RowDataPacket[]>(
                 `SELECT * FROM \`orders\` WHERE \`orderId\` = ?`,
                 [`${orderId}`]
-            )) as Array<Array<any>>;
+            );
             if (!getOrderResult.length)
                 throw new ModelError(
                     `Đơn hàng '${orderId}' không tồn tại.`,
@@ -424,19 +454,21 @@ async function restoreProductQuantity(orderId: number) {
                 );
 
             for (let i = 0; i < order.items.length; i++) {
-                const [getCurrentProductQuantity] = (await connection.execute(
-                    `SELECT \`quantity\` FROM \`products\` WHERE \`slug\` = ?`,
-                    [order.items[i].product.slug]
-                )) as Array<Array<any>>;
+                const [getCurrentProductQuantity] = await connection.execute<
+                    RowDataPacket[]
+                >(`SELECT \`quantity\` FROM \`products\` WHERE \`slug\` = ?`, [
+                    order.items[i].product.slug,
+                ]);
                 if (!getCurrentProductQuantity.length) continue;
                 const currentProductQuantity = getCurrentProductQuantity[0]
                         .quantity as number,
                     newProductQuantity: number =
                         currentProductQuantity + order.items[i].totalItems;
-                const [updateNewProductQuantity] = (await connection.execute(
-                    `UPDATE \`products\` SET \`quantity\` = ? WHERE \`slug\` = ?`,
-                    [`${newProductQuantity}`, order.items[i].product.slug]
-                )) as Array<any>;
+                const [updateNewProductQuantity] =
+                    await connection.execute<ResultSetHeader>(
+                        `UPDATE \`products\` SET \`quantity\` = ? WHERE \`slug\` = ?`,
+                        [`${newProductQuantity}`, order.items[i].product.slug]
+                    );
                 if (!updateNewProductQuantity.affectedRows)
                     throw new ModelError(
                         `Có lỗi xảy ra khi cập nhật số lượng sản phẩm (orders).`,
@@ -444,8 +476,6 @@ async function restoreProductQuantity(orderId: number) {
                         500
                     );
             }
-
-            return getOrderResult;
         });
 
         return new ModelResponse('Thành công.', true, null);
