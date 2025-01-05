@@ -24,15 +24,17 @@ import {
 import pathGlobal from '@sources/global/path';
 
 /**
- * Generate a new unique product slug for insertion.
+ * Generate a new unique product slug for insertion or update.
  * @param connection The mysql pool connection instance.
  * @param productName The product name.
- * @returns Returns a unique product slug ready for insertion.
+ * @param targetSlug If generate a new slug for an already exist product, specifies the target slug.
+ * @returns Returns a unique product slug ready for insertion or update.
  * @note This function is meant to be called in a transaction context.
  */
 async function generateProductSlug(
     connection: PoolConnection,
-    productName: string
+    productName: string,
+    targetSlug?: string
 ): Promise<string> {
     let slug = toSlug(productName),
         slugGenerateAttempt = 0,
@@ -46,11 +48,12 @@ async function generateProductSlug(
                 true,
                 500
             );
-        const [testNewSlugResult] = await connection.execute<RowDataPacket[]>(
-            `SELECT id FROM products WHERE BINARY slug = ?`,
-            [slug]
-        );
+        const [testNewSlugResult] = await connection.execute<
+            Array<RowDataPacket & { slug: string }>
+        >(`SELECT slug FROM products WHERE BINARY slug = ?`, [slug]);
         isDuplicate = !!testNewSlugResult.length;
+        if (targetSlug && targetSlug == testNewSlugResult[0]?.slug)
+            isDuplicate = false;
         slugGenerateAttempt++;
     }
 
@@ -426,7 +429,11 @@ async function updateProduct(
             quantity = Math.max(0, Math.min(quantity, 2147483647));
 
         await queryTransaction<void>(async (connection) => {
-            const productSlug = await generateProductSlug(connection, name);
+            const productSlug = await generateProductSlug(
+                connection,
+                name,
+                slug
+            );
 
             let columns = ['slug', 'name', 'desc', 'price', 'priority'],
                 params = [productSlug, name, desc, `${price}`, `${priority}`];

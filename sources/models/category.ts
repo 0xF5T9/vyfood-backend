@@ -24,15 +24,17 @@ import {
 import pathGlobal from '@sources/global/path';
 
 /**
- * Generate a new unique category slug for insertion.
+ * Generate a new unique category slug for insertion or update.
  * @param connection The mysql pool connection instance.
  * @param categoryName The category name.
- * @returns Returns a unique category slug ready for insertion.
+ * @param targetSlug If generate a new slug for an already exist category, specifies the target slug.
+ * @returns Returns a unique category slug ready for insertion or update.
  * @note This function is meant to be called in a transaction context.
  */
 async function generateCategorySlug(
     connection: PoolConnection,
-    categoryName: string
+    categoryName: string,
+    targetSlug?: string
 ): Promise<string> {
     let slug = toSlug(categoryName),
         slugGenerateAttempt = 0,
@@ -46,11 +48,12 @@ async function generateCategorySlug(
                 true,
                 500
             );
-        const [testNewSlugResult] = await connection.execute<RowDataPacket[]>(
-            `SELECT id FROM categories WHERE BINARY slug = ?`,
-            [slug]
-        );
+        const [testNewSlugResult] = await connection.execute<
+            Array<RowDataPacket & { slug: string }>
+        >(`SELECT slug FROM categories WHERE BINARY slug = ?`, [slug]);
         isDuplicate = !!testNewSlugResult.length;
+        if (targetSlug && targetSlug == testNewSlugResult[0]?.slug)
+            isDuplicate = false;
         slugGenerateAttempt++;
     }
 
@@ -355,7 +358,11 @@ async function updateCategory(
         priority = Math.max(0, Math.min(priority, 999999));
 
         await queryTransaction<void>(async (connection) => {
-            const categorySlug = await generateCategorySlug(connection, name);
+            const categorySlug = await generateCategorySlug(
+                connection,
+                name,
+                slug
+            );
 
             const [updateCategoryResult] =
                 await connection.execute<ResultSetHeader>(
