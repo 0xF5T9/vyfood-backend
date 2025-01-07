@@ -172,7 +172,7 @@ async function resetPassword(token: string, newPassword: string) {
                 .includes('invalid signature')
         )
             return new ModelResponse(
-                'Token không hợp lệ.',
+                'Yêu cầu khôi phục này không hợp lệ.',
                 false,
                 null,
                 false,
