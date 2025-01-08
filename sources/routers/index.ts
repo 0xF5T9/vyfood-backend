@@ -11,6 +11,7 @@ import recoveryRouter from './recovery';
 import productRouter from './product';
 import categoryRouter from './category';
 import orderRouter from './order';
+import newsletterRouter from './newsletter';
 import testRouter from './test';
 
 /**
@@ -25,6 +26,7 @@ function routers(app: Express) {
     app.use('/product', productRouter);
     app.use('/category', categoryRouter);
     app.use('/order', orderRouter);
+    app.use('/newsletter', newsletterRouter);
     app.use('/test', testRouter);
     app.get('/', (request: Request, response: Response) => {
         return response.status(200).json({ message: 'Ok.' });

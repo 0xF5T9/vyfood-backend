@@ -11,7 +11,7 @@
  Target Server Version : 80402 (8.4.2)
  File Encoding         : 65001
 
- Date: 02/01/2025 18:43:01
+ Date: 08/01/2025 12:07:08
 */
 
 SET NAMES utf8mb4;
@@ -60,6 +60,21 @@ CREATE TABLE `credentials`  (
 INSERT INTO `credentials` VALUES (1, '$2b$10$jssXyEPCsH09f0weS9/1q.R0y5aYh1rg7jqQyFdiprRC9JRb8SKnG', 'truyenhaunhan');
 
 -- ----------------------------
+-- Table structure for newsletter_subscribers
+-- ----------------------------
+DROP TABLE IF EXISTS `newsletter_subscribers`;
+CREATE TABLE `newsletter_subscribers`  (
+  `id` int UNSIGNED NOT NULL AUTO_INCREMENT,
+  `email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `email`(`email` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+
+-- ----------------------------
+-- Records of newsletter_subscribers
+-- ----------------------------
+
+-- ----------------------------
 -- Table structure for orders
 -- ----------------------------
 DROP TABLE IF EXISTS `orders`;
@@ -95,7 +110,7 @@ CREATE TABLE `product_categories`  (
   INDEX `category_slug`(`category_slug` ASC) USING BTREE,
   CONSTRAINT `product_categories_ibfk_1` FOREIGN KEY (`product_slug`) REFERENCES `products` (`slug`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `product_categories_ibfk_2` FOREIGN KEY (`category_slug`) REFERENCES `categories` (`slug`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Records of product_categories

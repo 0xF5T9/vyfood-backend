@@ -140,6 +140,7 @@ Output:
 - `NODEMAILER_USER` - Google user.
 - `NODEMAILER_APP_PASSWORD` - Google user app password.
 - `NODEMAILER_DOMAIN` - Domain that will be used when sending mails.
+- `NEWSLETTER_VALIDATION_TOKEN_SECRET_KEY` - The key that will be used to sign newsletter token.
 - `DATABASE_HOST` - MySQL host.
 - `DATABASE_USER` - MySQL user.
 - `DATABASE_PASSWORD` - MySQL password.
@@ -152,6 +153,7 @@ CORS_ORIGIN=https://mydomain.com
 NODEMAILER_USER=yourgmail@gmail.com
 NODEMAILER_APP_PASSWORD=your-google-app-password
 NODEMAILER_DOMAIN=https://mydomain.com
+NEWSLETTER_VALIDATION_TOKEN_SECRET_KEY=
 DATABASE_HOST=
 DATABASE_USER=
 DATABASE_PASSWORD=
