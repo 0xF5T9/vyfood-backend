@@ -22,6 +22,7 @@ import {
     toSlug,
 } from '@sources/utility/model';
 import pathGlobal from '@sources/global/path';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Generate a new unique category slug for insertion or update.
@@ -43,11 +44,7 @@ async function generateCategorySlug(
         if (slugGenerateAttempt !== 0)
             slug = `${toSlug(categoryName)}-${Math.floor(Math.random() * Date.now())}`;
         if (slugGenerateAttempt === 3)
-            throw new ModelError(
-                'Có lỗi xảy ra khi cố gắng tạo slug.',
-                true,
-                500
-            );
+            throw new ModelError(staticTexts.slugGenerateError, true, 500);
         const [testNewSlugResult] = await connection.execute<
             Array<RowDataPacket & { slug: string }>
         >(`SELECT slug FROM categories WHERE BINARY slug = ?`, [slug]);
@@ -112,11 +109,7 @@ async function generateCategoryImageInsertData(
         outputFilePath = newPath;
     while (isFileNameAlreadyExist) {
         if (fileNameGenerateAttempt === 3)
-            throw new ModelError(
-                'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                true,
-                500
-            );
+            throw new ModelError(staticTexts.fileNameGenerateError, true, 500);
 
         try {
             isFileNameAlreadyExist = await fs.readFile(outputFilePath);
@@ -194,13 +187,15 @@ async function getCategories(page: number = 1, itemPerPage: number = 99999) {
             };
         });
 
-        return new ModelResponse('Truy xuất dữ liệu thành công.', true, result);
+        return new ModelResponse(staticTexts.getDataSuccess, true, result);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -240,7 +235,7 @@ async function getCategoriesCount() {
         });
 
         return new ModelResponse(
-            'Truy xuất dữ liệu thành công.',
+            staticTexts.getDataSuccess,
             true,
             transformedCategories
         );
@@ -249,7 +244,9 @@ async function getCategoriesCount() {
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -275,17 +272,13 @@ async function createCategory(
     try {
         if (!name || (!priority && priority !== 0))
             throw new ModelError(
-                `Thông tin 'name', 'priority' bị thiếu.`,
+                `${staticTexts.invalidParameters}'name', 'priority'`,
                 false,
                 400
             );
 
         if (image && !image?.mimetype?.includes('image'))
-            throw new ModelError(
-                'Định dạng tệp không phải là hình ảnh.',
-                false,
-                400
-            );
+            throw new ModelError(staticTexts.invalidImageFileType, false, 400);
 
         priority = Math.max(0, Math.min(priority, 999999));
 
@@ -306,7 +299,7 @@ async function createCategory(
                 );
             if (!insertCategoryResult.affectedRows)
                 throw new ModelError(
-                    'Cập nhật danh mục vào cơ sở dữ liệu thất bại (categories).',
+                    staticTexts.createCategoryError,
                     true,
                     500
                 );
@@ -318,13 +311,21 @@ async function createCategory(
                 );
         });
 
-        return new ModelResponse('Tạo danh mục thành công.', true, null);
+        return new ModelResponse(
+            staticTexts.createCategorySuccess,
+            true,
+            null,
+            false,
+            201
+        );
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -350,7 +351,7 @@ async function updateCategory(
     try {
         if (!slug || !name || (!priority && priority !== 0))
             throw new ModelError(
-                `Thông tin 'slug', 'name', 'priority' bị thiếu.`,
+                `${staticTexts.invalidParameters}'slug', 'name', 'priority'`,
                 false,
                 400
             );
@@ -371,19 +372,21 @@ async function updateCategory(
                 );
             if (!updateCategoryResult.affectedRows)
                 throw new ModelError(
-                    `Không tìm thấy danh mục '${slug}'.`,
+                    `${staticTexts.categoryNotFound} (${slug})`,
                     false,
                     400
                 );
         });
 
-        return new ModelResponse('Cập nhật danh mục thành công.', true, null);
+        return new ModelResponse(staticTexts.updateCategorySuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -400,7 +403,11 @@ async function updateCategory(
 async function deleteCategory(slug: string) {
     try {
         if (!slug)
-            throw new ModelError(`Thông tin 'slug' bị thiếu.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'slug'`,
+                false,
+                400
+            );
 
         await queryTransaction<void>(async (connection) => {
             const [getCategoryImageResult] = await connection.execute<
@@ -410,7 +417,7 @@ async function deleteCategory(slug: string) {
             ]);
             if (!getCategoryImageResult.length)
                 throw new ModelError(
-                    `Không tìm thấy danh mục '${slug}'.`,
+                    `${staticTexts.categoryNotFound} (${slug})`,
                     false,
                     400
                 );
@@ -422,7 +429,7 @@ async function deleteCategory(slug: string) {
                 );
             if (!deleteCategoryResult.affectedRows)
                 throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng xoá danh mục khỏi cơ sở dữ liệu.',
+                    staticTexts.deleteCategoryError,
                     true,
                     500
                 );
@@ -438,13 +445,15 @@ async function deleteCategory(slug: string) {
             if (associatedImagePath) await fs.unlink(associatedImagePath);
         });
 
-        return new ModelResponse('Xoá danh mục thành công.', true, null);
+        return new ModelResponse(staticTexts.createCategorySuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -463,17 +472,13 @@ async function uploadCategoryImage(slug: string, image: formidable.File) {
     try {
         if (!slug || !image)
             throw new ModelError(
-                `Thông tin 'slug', 'image' bị thiếu.`,
+                `${staticTexts.invalidParameters}'slug', 'image'`,
                 false,
                 400
             );
 
         if (!image?.mimetype?.includes('image'))
-            throw new ModelError(
-                'Định dạng tệp không phải là hình ảnh.',
-                false,
-                400
-            );
+            throw new ModelError(staticTexts.invalidImageFileType, false, 400);
 
         await queryTransaction<void>(async (connection) => {
             const [getCategoryFileNameResult] = await connection.execute<
@@ -483,7 +488,7 @@ async function uploadCategoryImage(slug: string, image: formidable.File) {
             ]);
             if (!getCategoryFileNameResult.length)
                 throw new ModelError(
-                    `Không tìm thấy danh mục '${slug}'.`,
+                    `${staticTexts.categoryNotFound} (${slug})`,
                     false,
                     400
                 );
@@ -499,7 +504,7 @@ async function uploadCategoryImage(slug: string, image: formidable.File) {
                 );
             if (!updateImageFileNameResult.affectedRows)
                 throw new ModelError(
-                    `Không tìm thấy danh mục '${slug}' khi cập nhật ảnh.`,
+                    `${staticTexts.categoryNotFound} (${slug})`,
                     false,
                     500
                 );
@@ -531,13 +536,15 @@ async function uploadCategoryImage(slug: string, image: formidable.File) {
                 );
         });
 
-        return new ModelResponse('Tải hình ảnh thành công.', true, null);
+        return new ModelResponse(staticTexts.uploadImageSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,

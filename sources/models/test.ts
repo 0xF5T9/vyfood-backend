@@ -4,61 +4,25 @@
  */
 
 'use strict';
-import nodemailer from 'nodemailer';
 
-import { query } from '@sources/services/database';
-import { ModelError, ModelResponse } from '@sources/utility/model';
+import { ModelResponse } from '@sources/utility/model';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
- * Send email using nodemailer.
- * @param transporterOptions Nodemailer transporter options.
- * @param mailOptions Nodemailer mail options.
+ * Hello world.
  * @returns Returns the response object.
  */
-async function sendMail(
-    transporterOptions: {
-        host: string;
-        port: number;
-        secure: boolean;
-        user: string;
-        password: string;
-        service?: string;
-    },
-    mailOptions: {
-        from: string;
-        to: string;
-        subject: string;
-        html: string;
-    }
-) {
+async function hello() {
     try {
-        const transporter = nodemailer.createTransport({
-            service: transporterOptions.service,
-            host: transporterOptions.host,
-            port: transporterOptions.port,
-            secure: transporterOptions.secure,
-            auth: {
-                user: transporterOptions.user,
-                pass: transporterOptions.password,
-            },
-            // tls: { servername: `${transporterOptions.host}`, rejectUnauthorized: false },
-            // ignoreTLS: true,
-        });
-
-        const sendMailResult = await transporter.sendMail({
-            from: mailOptions.from,
-            to: mailOptions.to,
-            subject: mailOptions.subject,
-            html: mailOptions.html,
-        });
-
-        return new ModelResponse('Thành công.', true, sendMailResult);
+        return new ModelResponse('Hello world.', true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -67,4 +31,4 @@ async function sendMail(
     }
 }
 
-export default { sendMail };
+export default { hello };

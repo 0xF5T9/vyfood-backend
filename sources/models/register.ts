@@ -15,6 +15,7 @@ import {
     validateEmail,
     hashPassword,
 } from '@sources/utility/model';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Create an account.
@@ -31,7 +32,7 @@ async function createAccount(
     try {
         if (!username || !password || !email)
             throw new ModelError(
-                `Thông tin 'username', 'password', 'email' bị thiếu.`,
+                `${staticTexts.invalidParameters}'username', 'password', 'email'`,
                 false,
                 400
             );
@@ -43,7 +44,7 @@ async function createAccount(
                 !(await validateEmail(connection, email, true))
             )
                 throw new ModelError(
-                    'Thông tin đăng ký không hợp lệ.',
+                    staticTexts.invalidRegisterInformation,
                     false,
                     400
                 );
@@ -56,11 +57,7 @@ async function createAccount(
                     [username, email]
                 );
             if (!insertUserResult.affectedRows)
-                throw new ModelError(
-                    'Cập nhật người dùng vào cơ sở dữ liệu thất bại (users).',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.registerError, true, 500);
 
             const [insertCredentialResult] =
                 await connection.execute<ResultSetHeader>(
@@ -68,20 +65,24 @@ async function createAccount(
                     [hashedPassword, username]
                 );
             if (!insertCredentialResult.affectedRows)
-                throw new ModelError(
-                    'Cập nhật người dùng vào cơ sở dữ liệu thất bại (credentials).',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.registerError, true, 500);
         });
 
-        return new ModelResponse('Tạo tài khoản thành công.', true, null);
+        return new ModelResponse(
+            staticTexts.registerSuccess,
+            true,
+            null,
+            false,
+            201
+        );
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,

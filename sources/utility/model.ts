@@ -7,6 +7,7 @@
 import type { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import bcrypt from 'bcrypt';
 import slugify from 'slugify';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Model error object.
@@ -150,18 +151,10 @@ async function validateUsername(
     duplicateCheck: boolean = false
 ): Promise<boolean> {
     if (!/^[a-z0-9]+$/.test(username))
-        throw new ModelError(
-            'Tên tài khoản chứa ký tự không hợp lệ [a-z0-9].',
-            false,
-            400
-        );
+        throw new ModelError(staticTexts.invalidUsernameCharacters, false, 400);
 
     if (username.length < 6 || username.length > 16)
-        throw new ModelError(
-            'Tên tài khoản phải có tối thiểu 6 ký tự và tối đa 16 ký tự.',
-            false,
-            400
-        );
+        throw new ModelError(staticTexts.invalidUsernameLength, false, 400);
 
     if (duplicateCheck) {
         const [result] = await connection.execute<
@@ -170,7 +163,7 @@ async function validateUsername(
             username,
         ]);
         if (!!result[0].count)
-            throw new ModelError('Tên người dùng này đã tồn tại.', false, 400);
+            throw new ModelError(staticTexts.usernameAlreadyExist, false, 400);
     }
 
     return true;
@@ -190,18 +183,14 @@ async function validateEmail(
     duplicateCheck: boolean = false
 ): Promise<boolean> {
     if (!/^[a-z0-9](\.?[a-z0-9]){5,}@g(oogle)?mail\.com$/.test(email))
-        throw new ModelError(
-            'Địa chỉ email không hợp lệ (Chỉ hỗ trợ Gmail).',
-            false,
-            400
-        );
+        throw new ModelError(staticTexts.invalidEmail, false, 400);
 
     if (duplicateCheck) {
         const [result] = await connection.execute<
             Array<RowDataPacket & { count: string }>
         >('SELECT COUNT(*) AS `count` FROM users WHERE email = ?', [email]);
         if (!!result[0].count)
-            throw new ModelError('Địa chỉ email này đã tồn tại.', false, 400);
+            throw new ModelError(staticTexts.emailAlreadyExist, false, 400);
     }
 
     return true;
@@ -214,11 +203,7 @@ async function validateEmail(
  */
 function validatePassword(password: string): boolean {
     if (password.length < 8 || password.length > 32)
-        throw new ModelError(
-            'Mật khẩu phải có tối thiểu 8 ký tự và tối đa 32 ký tự.',
-            false,
-            400
-        );
+        throw new ModelError(staticTexts.invalidPasswordLength, false, 400);
 
     return true;
 }

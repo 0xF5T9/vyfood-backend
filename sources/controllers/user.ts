@@ -7,6 +7,9 @@
 import formidable from 'formidable';
 import { RequestHandler } from 'express';
 
+import type { TypedResponse } from '@root/global';
+import { RawAPIResponse } from '@sources/apis/emart/types';
+import * as APITypes from '@sources/apis/emart/types';
 import model from '@sources/models/user';
 
 /**
@@ -14,58 +17,85 @@ import model from '@sources/models/user';
  */
 class UserController {
     // [GET] /user/:username
-    getInfo: RequestHandler = async (request, response, next) => {
+    getInfo: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.GetUserInfoResponseData>
+        >,
+        next
+    ) => {
         const { username } = request.params;
 
         const userResult = await model.getInfo(username?.toLowerCase());
-        if (!userResult.success)
-            return response.status(userResult.statusCode).json({
-                message: userResult.message,
-            });
 
-        return response.status(userResult.statusCode).json({
-            message: userResult.message,
-            data: userResult.data,
-        });
+        return response
+            .status(userResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.GetUserInfoResponseData>(
+                    userResult.message,
+                    userResult.success,
+                    userResult.data
+                )
+            );
     };
 
     // [PATCH] /user/:username
-    updateInfo: RequestHandler = async (request, response, next) => {
+    updateInfo: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UpdateUserInfoResponseData>
+        >,
+        next
+    ) => {
         const { username } = request.params;
 
         const updateInfoResult = await model.updateInfo(
             username?.toLowerCase(),
             request.body
         );
-        if (!updateInfoResult.success)
-            return response.status(updateInfoResult.statusCode).json({
-                message: updateInfoResult.message,
-            });
 
-        return response.status(updateInfoResult.statusCode).json({
-            message: updateInfoResult.message,
-            data: updateInfoResult.data,
-        });
+        return response
+            .status(updateInfoResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.UpdateUserInfoResponseData>(
+                    updateInfoResult.message,
+                    updateInfoResult.success,
+                    updateInfoResult.data
+                )
+            );
     };
 
     // [POST] /user/update-email-address
-    updateEmailAddress: RequestHandler = async (request, response, next) => {
+    updateEmailAddress: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UpdateEmailAddressResponseData>
+        >,
+        next
+    ) => {
         const { token } = request.body;
 
         const updateEmailAddressResult = await model.updateEmailAddress(token);
-        if (!updateEmailAddressResult.success)
-            return response
-                .status(updateEmailAddressResult.statusCode)
-                .json({ message: 'Yêu cầu không hợp lệ.' });
 
-        return response.status(updateEmailAddressResult.statusCode).json({
-            message: updateEmailAddressResult.message,
-            data: updateEmailAddressResult.data,
-        });
+        return response
+            .status(updateEmailAddressResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.UpdateEmailAddressResponseData>(
+                    updateEmailAddressResult.message,
+                    updateEmailAddressResult.success,
+                    updateEmailAddressResult.data
+                )
+            );
     };
 
     // [POST] /user/:username/update-password
-    updatePassword: RequestHandler = async (request, response, next) => {
+    updatePassword: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UpdatePasswordResponseData>
+        >,
+        next
+    ) => {
         const { username } = request.params,
             { currentPassword, newPassword } = request.body;
 
@@ -74,19 +104,26 @@ class UserController {
             currentPassword,
             newPassword
         );
-        if (!updatePasswordResult.success)
-            return response
-                .status(updatePasswordResult.statusCode)
-                .json({ message: updatePasswordResult.message });
 
-        return response.status(updatePasswordResult.statusCode).json({
-            message: updatePasswordResult.message,
-            data: updatePasswordResult.data,
-        });
+        return response
+            .status(updatePasswordResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.UpdatePasswordResponseData>(
+                    updatePasswordResult.message,
+                    updatePasswordResult.success,
+                    updatePasswordResult.data
+                )
+            );
     };
 
     // [POST] /user/:username/delete-user
-    deleteUser: RequestHandler = async (request, response, next) => {
+    deleteUser: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.DeleteUserResponseData>
+        >,
+        next
+    ) => {
         const { username } = request.params,
             { currentPassword } = request.body;
 
@@ -94,19 +131,26 @@ class UserController {
             username?.toLowerCase(),
             currentPassword
         );
-        if (!deleteResult.success)
-            return response
-                .status(deleteResult.statusCode)
-                .json({ message: deleteResult.message });
 
-        return response.status(deleteResult.statusCode).json({
-            message: deleteResult.message,
-            data: deleteResult.data,
-        });
+        return response
+            .status(deleteResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.DeleteUserResponseData>(
+                    deleteResult.message,
+                    deleteResult.success,
+                    deleteResult.data
+                )
+            );
     };
 
     // [GET] /user/admin-get-users
-    getUsersAsAdmin: RequestHandler = async (request, response, next) => {
+    getUsersAsAdmin: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.GetUsersAsAdminResponseData>
+        >,
+        next
+    ) => {
         const query: { page?: string; itemPerPage?: string } = {
                 ...request.query,
             },
@@ -117,19 +161,26 @@ class UserController {
             page || undefined,
             itemPerPage || undefined
         );
-        if (!usersResult.success)
-            return response.status(usersResult.statusCode).json({
-                message: usersResult.message,
-            });
 
-        return response.status(usersResult.statusCode).json({
-            message: usersResult.message,
-            data: usersResult.data,
-        });
+        return response
+            .status(usersResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.GetUsersAsAdminResponseData>(
+                    usersResult.message,
+                    usersResult.success,
+                    usersResult.data
+                )
+            );
     };
 
     // [POST] /user/admin-create
-    createUserAsAdmin: RequestHandler = async (request, response, next) => {
+    createUserAsAdmin: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.CreateUserAsAdminResponseData>
+        >,
+        next
+    ) => {
         try {
             const form = formidable({
                     maxFiles: 1,
@@ -159,32 +210,49 @@ class UserController {
                 role,
                 avatarImage
             );
-            if (!createResult.success)
-                return response
-                    .status(createResult.statusCode)
-                    .json({ message: createResult.message });
 
-            return response.status(201).json({
-                message: createResult.message,
-                data: createResult.data,
-            });
+            return response
+                .status(createResult.statusCode)
+                .json(
+                    new RawAPIResponse<APITypes.CreateUserAsAdminResponseData>(
+                        createResult.message,
+                        createResult.success,
+                        createResult.data
+                    )
+                );
         } catch (error) {
             console.error(error);
             if (error.httpCode === 413)
-                return response.status(413).json({
-                    message:
-                        'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
-                    data: null,
-                });
+                return response
+                    .status(413)
+                    .json(
+                        new RawAPIResponse<APITypes.CreateUserAsAdminResponseData>(
+                            'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
+                            false,
+                            null
+                        )
+                    );
 
             return response
                 .status(500)
-                .json({ message: 'Có lỗi xảy ra.', data: null });
+                .json(
+                    new RawAPIResponse<APITypes.CreateUserAsAdminResponseData>(
+                        'Có lỗi xảy ra.',
+                        false,
+                        null
+                    )
+                );
         }
     };
 
     // [PUT] /user/admin-update
-    updateUserAsAdmin: RequestHandler = async (request, response, next) => {
+    updateUserAsAdmin: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UpdateUserAsAdminResponseData>
+        >,
+        next
+    ) => {
         const { targetUsername, email, username, password, role } =
             request.body;
 
@@ -195,37 +263,51 @@ class UserController {
             password,
             role
         );
-        if (!updateUserResult.success)
-            return response.status(updateUserResult.statusCode).json({
-                message: updateUserResult.message,
-            });
 
-        return response.status(updateUserResult.statusCode).json({
-            message: updateUserResult.message,
-            data: updateUserResult.data,
-        });
+        return response
+            .status(updateUserResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.UpdateUserAsAdminResponseData>(
+                    updateUserResult.message,
+                    updateUserResult.success,
+                    updateUserResult.data
+                )
+            );
     };
 
     // [DELETE] /user/admin-delete
-    deleteUserAsAdmin: RequestHandler = async (request, response, next) => {
+    deleteUserAsAdmin: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.DeleteUserAsAdminResponseData>
+        >,
+        next
+    ) => {
         const { username } = request.body;
 
         const deleteUserResult = await model.deleteUserAsAdmin(
             username?.toLowerCase()
         );
-        if (!deleteUserResult.success)
-            return response.status(deleteUserResult.statusCode).json({
-                message: deleteUserResult.message,
-            });
 
-        return response.status(deleteUserResult.statusCode).json({
-            message: deleteUserResult.message,
-            data: deleteUserResult.data,
-        });
+        return response
+            .status(deleteUserResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.DeleteUserAsAdminResponseData>(
+                    deleteUserResult.message,
+                    deleteUserResult.success,
+                    deleteUserResult.data
+                )
+            );
     };
 
     // [POST] /user/:username/upload-avatar
-    uploadUserAvatar: RequestHandler = async (request, response, next) => {
+    uploadUserAvatar: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UploadUserAvatarResponseData>
+        >,
+        next
+    ) => {
         try {
             const form = formidable({
                     maxFiles: 1,
@@ -245,34 +327,47 @@ class UserController {
                 username?.toLowerCase(),
                 avatarImage
             );
-            if (!uploadResult.success)
-                return response
-                    .status(uploadResult.statusCode)
-                    .json({ message: uploadResult.message });
 
-            return response.status(201).json({
-                message: uploadResult.message,
-                data: uploadResult.data,
-            });
+            return response
+                .status(uploadResult.statusCode)
+                .json(
+                    new RawAPIResponse<APITypes.UploadUserAvatarResponseData>(
+                        uploadResult.message,
+                        uploadResult.success,
+                        uploadResult.data
+                    )
+                );
         } catch (error) {
             console.error(error);
             if (error.httpCode === 413)
-                return response.status(413).json({
-                    message:
-                        'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
-                    data: null,
-                });
+                return response
+                    .status(413)
+                    .json(
+                        new RawAPIResponse<APITypes.UploadUserAvatarResponseData>(
+                            'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
+                            false,
+                            null
+                        )
+                    );
 
             return response
                 .status(500)
-                .json({ message: 'Có lỗi xảy ra.', data: null });
+                .json(
+                    new RawAPIResponse<APITypes.UploadUserAvatarResponseData>(
+                        'Có lỗi xảy ra.',
+                        false,
+                        null
+                    )
+                );
         }
     };
 
     // [POST] /user/admin-upload-avatar
     uploadUserAvatarAsAdmin: RequestHandler = async (
         request,
-        response,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UploadUserAvatarAsAdminResponseData>
+        >,
         next
     ) => {
         try {
@@ -295,27 +390,38 @@ class UserController {
                 username?.toLowerCase(),
                 avatarImage
             );
-            if (!uploadResult.success)
-                return response
-                    .status(uploadResult.statusCode)
-                    .json({ message: uploadResult.message });
 
-            return response.status(201).json({
-                message: uploadResult.message,
-                data: uploadResult.data,
-            });
+            return response
+                .status(uploadResult.statusCode)
+                .json(
+                    new RawAPIResponse<APITypes.UploadUserAvatarAsAdminResponseData>(
+                        uploadResult.message,
+                        uploadResult.success,
+                        uploadResult.data
+                    )
+                );
         } catch (error) {
             console.error(error);
             if (error.httpCode === 413)
-                return response.status(413).json({
-                    message:
-                        'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
-                    data: null,
-                });
+                return response
+                    .status(413)
+                    .json(
+                        new RawAPIResponse<APITypes.UploadUserAvatarAsAdminResponseData>(
+                            'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
+                            false,
+                            null
+                        )
+                    );
 
             return response
                 .status(500)
-                .json({ message: 'Có lỗi xảy ra.', data: null });
+                .json(
+                    new RawAPIResponse<APITypes.UploadUserAvatarAsAdminResponseData>(
+                        'Có lỗi xảy ra.',
+                        false,
+                        null
+                    )
+                );
         }
     };
 }

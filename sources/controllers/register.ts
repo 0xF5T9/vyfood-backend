@@ -6,6 +6,9 @@
 'use strict';
 import { RequestHandler } from 'express';
 
+import type { TypedResponse } from '@root/global';
+import { RawAPIResponse } from '@sources/apis/emart/types';
+import * as APITypes from '@sources/apis/emart/types';
 import model from '@sources/models/register';
 
 /**
@@ -13,7 +16,11 @@ import model from '@sources/models/register';
  */
 class RegisterController {
     // [POST] /register
-    register: RequestHandler = async (request, response, next) => {
+    register: RequestHandler = async (
+        request,
+        response: TypedResponse<RawAPIResponse<APITypes.RegisterResponseData>>,
+        next
+    ) => {
         const { username, password, email } = request.body;
 
         const createAccountResult = await model.createAccount(
@@ -21,14 +28,16 @@ class RegisterController {
             password,
             email
         );
-        if (!createAccountResult.success)
-            return response.status(createAccountResult.statusCode).json({
-                message: createAccountResult.message,
-            });
 
-        return response.status(201).json({
-            message: createAccountResult.message,
-        });
+        return response
+            .status(createAccountResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.RegisterResponseData>(
+                    createAccountResult.message,
+                    createAccountResult.success,
+                    createAccountResult.data
+                )
+            );
     };
 }
 

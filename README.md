@@ -1,6 +1,6 @@
-# VyFood Backend
+# E-Mart Backend
 
-> VyFood NodeJS backend repository.
+> E-Mart NodeJS backend repository.
 
 ## Prerequisites
 
@@ -44,8 +44,6 @@ root/
 ├── sources
 ├── upload/
 │   ├── product/
-│   │   ├── banh-cuon.jpg
-│   │   ├── banh-uot.jpg
 │   │   └── ...
 │   ├── category/
 │   │   └── ...

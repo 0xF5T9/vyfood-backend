@@ -13,6 +13,7 @@ import {
     getOffset,
     toSQLTimestamp,
 } from '@sources/utility/model';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 type Product = {
     slug: string;
@@ -100,13 +101,15 @@ async function getOrders(page: number = 1, itemPerPage: number = 12) {
             return { meta, orders: orders };
         });
 
-        return new ModelResponse('Truy xuất dữ liệu thành công.', true, result);
+        return new ModelResponse(staticTexts.getDataSuccess, true, result);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -140,30 +143,34 @@ async function createOrder(
     try {
         if (!deliveryMethod || !customerName || !customerPhoneNumber || !items)
             throw new ModelError(
-                `Thông tin 'deliveryMethod', 'customerName', 'customerPhoneNumber', 'items' bị thiếu.`,
+                `${staticTexts.invalidParameters}'deliveryMethod', 'customerName', 'customerPhoneNumber', 'items'`,
                 false,
                 400
             );
 
         if (deliveryMethod !== 'shipping' && deliveryMethod !== 'pickup')
-            throw new ModelError(
-                `Phương thức thanh toán phải là 'shipping' hoặc 'pickup'.`,
-                false,
-                400
-            );
+            throw new ModelError(staticTexts.invalidShippingMethod, false, 400);
 
         if (deliveryMethod === 'shipping' && !deliveryAddress)
             throw new ModelError(
-                `Thông tin 'deliveryAddress' bị thiếu.`,
+                `${staticTexts.invalidParameters}'deliveryAddress'`,
                 false,
                 400
             );
 
         if (deliveryMethod === 'pickup' && !pickupAt)
-            throw new ModelError(`Thông tin 'pickupAt' bị thiếu.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'pickupAt'`,
+                false,
+                400
+            );
 
         if (!Array.isArray(items) || !items.length)
-            throw new ModelError(`Thông tin 'items' không hợp lệ.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'items'`,
+                false,
+                400
+            );
 
         await queryTransaction<void>(async (connection) => {
             // Reject the request if the cart product items information is not matches the
@@ -190,7 +197,7 @@ async function createOrder(
                 );
                 if (!currentQuantityResult.length)
                     throw new ModelError(
-                        'Thông tin đơn hàng cần được cập nhật mới.',
+                        staticTexts.orderNeedUpdate,
                         false,
                         409
                     );
@@ -199,7 +206,7 @@ async function createOrder(
                     newQuantity = currentQuantity - items[i].totalItems;
                 if (newQuantity < 0)
                     throw new ModelError(
-                        'Thông tin đơn hàng cần được cập nhật mới.',
+                        staticTexts.orderNeedUpdate,
                         false,
                         409
                     );
@@ -210,7 +217,7 @@ async function createOrder(
                     );
                 if (!updateItemQuantity.affectedRows)
                     throw new ModelError(
-                        'Cập nhật số lượng hàng thất bại (products).',
+                        staticTexts.createOrderError,
                         true,
                         500
                     );
@@ -220,10 +227,10 @@ async function createOrder(
                 if (
                     !mappedProducts[item?.product?.slug] || // The product no longer exist.
                     item?.product?.price !==
-                        mappedProducts[item?.product?.slug]?.price // Or the product price has been changed.
+                        parseFloat(mappedProducts[item?.product?.slug]?.price) // Or the product price has been changed.
                 )
                     throw new ModelError(
-                        'Thông tin đơn hàng đã bị thay đổi.',
+                        staticTexts.orderInfoChanged,
                         false,
                         409
                     );
@@ -234,11 +241,7 @@ async function createOrder(
                 `SELECT COALESCE(MAX(\`orderId\`), 0) + 1 AS \`newUniqueId\` FROM \`orders\``
             );
             if (!selectResult?.length)
-                throw new ModelError(
-                    `Có lỗi xảy ra khi cố gắng tạo id cho đơn hàng.`,
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.createOrderError, true, 500);
             const newUniqueId = selectResult[0]?.newUniqueId;
 
             const [insertResult] = await connection.execute<ResultSetHeader>(
@@ -260,20 +263,18 @@ async function createOrder(
                 ]
             );
             if (!insertResult.affectedRows)
-                throw new ModelError(
-                    'Thêm đơn hàng vào cơ sở dữ liệu thất bại (orders).',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.createOrderError, true, 500);
         });
 
-        return new ModelResponse('Thành công.', true, null);
+        return new ModelResponse(staticTexts.createOrderSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -300,7 +301,11 @@ async function updateOrder(
 ) {
     try {
         if (!orderId)
-            throw new ModelError(`Thông tin 'orderId' bị thiếu.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'orderId'`,
+                false,
+                400
+            );
 
         if (status) {
             if (
@@ -312,7 +317,7 @@ async function updateOrder(
                 status !== 'refunded'
             )
                 throw new ModelError(
-                    'Trạng thái đơn hàng không hợp lệ',
+                    staticTexts.invalidOrderStatus,
                     false,
                     400
                 );
@@ -324,7 +329,11 @@ async function updateOrder(
                 [`${orderId}`]
             );
             if (!orderResult.length)
-                throw new ModelError('Đơn hàng không tồn tại.', false, 400);
+                throw new ModelError(
+                    `${staticTexts.orderNotFound} (${orderId})`,
+                    false,
+                    400
+                );
 
             const [patchOrderResult] =
                 await connection.execute<ResultSetHeader>(
@@ -332,20 +341,18 @@ async function updateOrder(
                     [`${orderId}`]
                 );
             if (!patchOrderResult.affectedRows)
-                throw new ModelError(
-                    'Có lỗi xảy ra khi cập nhật dữ liệu đơn hàng.',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.updateOrderError, true, 500);
         });
 
-        return new ModelResponse('Thành công.', true, null);
+        return new ModelResponse(staticTexts.updateOrderSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -362,7 +369,11 @@ async function updateOrder(
 async function deleteOrder(orderId: number) {
     try {
         if (!orderId)
-            throw new ModelError(`Thông tin 'orderId' bị thiếu.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'orderId'`,
+                false,
+                400
+            );
 
         await queryTransaction<void>(async (connection) => {
             const [orderResult] = await connection.execute<RowDataPacket[]>(
@@ -371,7 +382,7 @@ async function deleteOrder(orderId: number) {
             );
             if (!orderResult.length)
                 throw new ModelError(
-                    `Đơn hàng '${orderId}' không tồn tại.`,
+                    `${staticTexts.orderNotFound} (${orderId})`,
                     false,
                     400
                 );
@@ -382,20 +393,18 @@ async function deleteOrder(orderId: number) {
                     [`${orderId}`]
                 );
             if (!deleteOrderResult?.affectedRows)
-                throw new ModelError(
-                    `Có lỗi xảy ra khi xoá đơn hàng.`,
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.deleteOrderError, true, 500);
         });
 
-        return new ModelResponse('Xoá đơn hàng thành công.', true, null);
+        return new ModelResponse(staticTexts.deleteOrderSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -412,7 +421,11 @@ async function deleteOrder(orderId: number) {
 async function restoreProductQuantity(orderId: number) {
     try {
         if (!orderId)
-            throw new ModelError(`Thông tin 'orderId' bị thiếu.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'orderId'`,
+                false,
+                400
+            );
 
         await queryTransaction<void>(async (connection) => {
             const [getOrderResult] = await connection.execute<RowDataPacket[]>(
@@ -421,7 +434,7 @@ async function restoreProductQuantity(orderId: number) {
             );
             if (!getOrderResult.length)
                 throw new ModelError(
-                    `Đơn hàng '${orderId}' không tồn tại.`,
+                    `${staticTexts.orderNotFound} (${orderId})`,
                     false,
                     400
                 );
@@ -448,7 +461,7 @@ async function restoreProductQuantity(orderId: number) {
 
             if (order.status !== 'aborted' && order.status !== 'refunded')
                 throw new ModelError(
-                    `Trạng thái đơn hàng phải là: Đã hoàn tiền hoặc Đã huỷ`,
+                    staticTexts.unexpectedOrderStatusWhileRestoreQuantity,
                     false,
                     400
                 );
@@ -471,20 +484,26 @@ async function restoreProductQuantity(orderId: number) {
                     );
                 if (!updateNewProductQuantity.affectedRows)
                     throw new ModelError(
-                        `Có lỗi xảy ra khi cập nhật số lượng sản phẩm (orders).`,
+                        staticTexts.restoreOrderProductQuantityError,
                         true,
                         500
                     );
             }
         });
 
-        return new ModelResponse('Thành công.', true, null);
+        return new ModelResponse(
+            staticTexts.restoreOrderProductQuantitySuccess,
+            true,
+            null
+        );
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,

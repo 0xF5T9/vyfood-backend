@@ -10,6 +10,6 @@ import controller from '@sources/controllers/test';
 
 const router = express.Router();
 
-router.post('/sendMail', controller.sendMail); // Send email using nodemailer.
+router.post('/', controller.hello);
 
 export default router;

@@ -6,6 +6,9 @@
 'use strict';
 import { RequestHandler } from 'express';
 
+import type { TypedResponse } from '@root/global';
+import { RawAPIResponse } from '@sources/apis/emart/types';
+import * as APITypes from '@sources/apis/emart/types';
 import model from '@sources/models/order';
 
 /**
@@ -13,7 +16,11 @@ import model from '@sources/models/order';
  */
 class OrderController {
     // [GET] /order
-    getOrders: RequestHandler = async (request, response, next) => {
+    getOrders: RequestHandler = async (
+        request,
+        response: TypedResponse<RawAPIResponse<APITypes.GetOrdersResponseData>>,
+        next
+    ) => {
         const query: { page?: string; itemPerPage?: string } = {
                 ...request.query,
             },
@@ -24,19 +31,26 @@ class OrderController {
             page || undefined,
             itemPerPage || undefined
         );
-        if (!getOrdersResult.success)
-            return response.status(getOrdersResult.statusCode).json({
-                message: getOrdersResult.message,
-            });
 
-        return response.status(getOrdersResult.statusCode).json({
-            message: getOrdersResult.message,
-            data: getOrdersResult.data,
-        });
+        return response
+            .status(getOrdersResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.GetOrdersResponseData>(
+                    getOrdersResult.message,
+                    getOrdersResult.success,
+                    getOrdersResult.data
+                )
+            );
     };
 
     // [POST] /order
-    createOrder: RequestHandler = async (request, response, next) => {
+    createOrder: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.CreateOrderResponseData>
+        >,
+        next
+    ) => {
         const {
             deliveryMethod,
             deliveryAddress,
@@ -58,64 +72,85 @@ class OrderController {
             pickupAt,
             deliveryNote
         );
-        if (!createOrderResult.success)
-            return response
-                .status(createOrderResult.statusCode)
-                .json({ message: createOrderResult.message });
 
         return response
-            .status(200)
-            .json({ message: 'Thành công.', data: createOrderResult.data });
+            .status(createOrderResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.CreateOrderResponseData>(
+                    createOrderResult.message,
+                    createOrderResult.success,
+                    createOrderResult.data
+                )
+            );
     };
 
     // [PATCH] /order
-    updateOrder: RequestHandler = async (request, response, next) => {
+    updateOrder: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UpdateOrderResponseData>
+        >,
+        next
+    ) => {
         const { orderId, status } = request.body;
 
         const updateOrderResult = await model.updateOrder(orderId, status);
-        if (!updateOrderResult.success)
-            return response
-                .status(updateOrderResult.statusCode)
-                .json({ message: updateOrderResult.message });
 
         return response
-            .status(200)
-            .json({ message: 'Thành công.', data: updateOrderResult.data });
+            .status(updateOrderResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.UpdateOrderResponseData>(
+                    updateOrderResult.message,
+                    updateOrderResult.success,
+                    updateOrderResult.data
+                )
+            );
     };
 
     // [DELETE] /order
-    deleteOrder: RequestHandler = async (request, response, next) => {
+    deleteOrder: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.DeleteOrderResponseData>
+        >,
+        next
+    ) => {
         const { orderId } = request.body;
 
         const deleteOrderResult = await model.deleteOrder(orderId);
-        if (!deleteOrderResult.success)
-            return response.status(deleteOrderResult.statusCode).json({
-                message: deleteOrderResult.message,
-            });
 
-        return response.status(deleteOrderResult.statusCode).json({
-            message: deleteOrderResult.message,
-            data: deleteOrderResult.data,
-        });
+        return response
+            .status(deleteOrderResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.DeleteOrderResponseData>(
+                    deleteOrderResult.message,
+                    deleteOrderResult.success,
+                    deleteOrderResult.data
+                )
+            );
     };
 
     // [POST] /order/restore-product-quantity
     restoreProductQuantity: RequestHandler = async (
         request,
-        response,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.RestoreProductQuantityResponseData>
+        >,
         next
     ) => {
         const { orderId } = request.body;
 
         const restoreResult = await model.restoreProductQuantity(orderId);
-        if (!restoreResult.success)
-            return response
-                .status(restoreResult.statusCode)
-                .json({ message: restoreResult.message });
 
         return response
-            .status(200)
-            .json({ message: restoreResult.message, data: restoreResult.data });
+            .status(restoreResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.RestoreProductQuantityResponseData>(
+                    restoreResult.message,
+                    restoreResult.success,
+                    restoreResult.data
+                )
+            );
     };
 }
 

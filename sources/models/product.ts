@@ -22,6 +22,7 @@ import {
     toSlug,
 } from '@sources/utility/model';
 import pathGlobal from '@sources/global/path';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Generate a new unique product slug for insertion or update.
@@ -43,11 +44,7 @@ async function generateProductSlug(
         if (slugGenerateAttempt !== 0)
             slug = `${toSlug(productName)}-${Math.floor(Math.random() * Date.now())}`;
         if (slugGenerateAttempt === 3)
-            throw new ModelError(
-                'Có lỗi xảy ra khi cố gắng tạo slug.',
-                true,
-                500
-            );
+            throw new ModelError(staticTexts.slugGenerateError, true, 500);
         const [testNewSlugResult] = await connection.execute<
             Array<RowDataPacket & { slug: string }>
         >(`SELECT slug FROM products WHERE BINARY slug = ?`, [slug]);
@@ -112,11 +109,7 @@ async function generateProductImageInsertData(
         outputFilePath = newPath;
     while (isFileNameAlreadyExist) {
         if (fileNameGenerateAttempt === 3)
-            throw new ModelError(
-                'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                true,
-                500
-            );
+            throw new ModelError(staticTexts.fileNameGenerateError, true, 500);
 
         try {
             isFileNameAlreadyExist = await fs.readFile(outputFilePath);
@@ -207,6 +200,7 @@ async function getProducts(page: number = 1, itemPerPage: number = 12) {
                             (category) => `${category['category_slug']}`
                         );
                     product['category'] = productCategories;
+                    product['price'] = parseFloat(product['price']);
                     return product;
                 })
             );
@@ -235,13 +229,15 @@ async function getProducts(page: number = 1, itemPerPage: number = 12) {
             return { meta, products: transformedProducts };
         });
 
-        return new ModelResponse('Truy xuất dữ liệu thành công.', true, result);
+        return new ModelResponse(staticTexts.getDataSuccess, true, result);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -278,7 +274,7 @@ async function createProduct(
             (!priority && priority !== 0)
         )
             throw new ModelError(
-                `Thông tin 'name', 'price', 'quantity', 'priority' bị thiếu.`,
+                `${staticTexts.invalidParameters}'name', 'price', 'quantity', 'priority'`,
                 false,
                 400
             );
@@ -298,11 +294,7 @@ async function createProduct(
         price = Math.max(0, Math.min(price, 2147483647));
 
         if (image && !image?.mimetype?.includes('image'))
-            throw new ModelError(
-                'Định dạng tệp không phải là hình ảnh.',
-                false,
-                400
-            );
+            throw new ModelError(staticTexts.invalidImageFileType, false, 400);
 
         await queryTransaction<void>(async (connection) => {
             const productSlug = await generateProductSlug(connection, name),
@@ -322,11 +314,7 @@ async function createProduct(
                     ]
                 );
             if (!insertProductResult.affectedRows)
-                throw new ModelError(
-                    'Cập nhật sản phẩm vào cơ sở dữ liệu thất bại (products).',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.createProductError, true, 500);
 
             if (categories) {
                 const isCategoriesValid = await validateProductCategories(
@@ -334,7 +322,11 @@ async function createProduct(
                     categories?.split(',')
                 );
                 if (!isCategoriesValid)
-                    throw new ModelError('Danh mục không hợp lệ.', false, 400);
+                    throw new ModelError(
+                        staticTexts.productInvalidCategory,
+                        false,
+                        400
+                    );
 
                 const insertCategoriesResult = await Promise.all(
                     categories?.split(',').map(async (categorySlug) => {
@@ -351,7 +343,7 @@ async function createProduct(
                 for (const result in insertCategoriesResult) {
                     if (!result)
                         throw new ModelError(
-                            'Có lỗi xảy ra khi thêm danh mục của sản phẩm (product_categories)',
+                            staticTexts.createProductError,
                             true,
                             500
                         );
@@ -365,13 +357,21 @@ async function createProduct(
                 );
         });
 
-        return new ModelResponse('Tạo sản phẩm thành công.', true, null);
+        return new ModelResponse(
+            staticTexts.createProductSuccess,
+            true,
+            null,
+            false,
+            201
+        );
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -408,7 +408,7 @@ async function updateProduct(
             (!priority && priority !== 0)
         )
             throw new ModelError(
-                `Thông tin 'slug', 'name', 'price', 'priority' bị thiếu.`,
+                `${staticTexts.invalidParameters}'slug', 'name', 'price', 'priority'`,
                 false,
                 400
             );
@@ -423,10 +423,14 @@ async function updateProduct(
                 desc = '';
         }
 
+        console.log(price);
+
         priority = Math.max(0, Math.min(priority, 2147483647));
         price = Math.max(0, Math.min(price, 2147483647));
         if (quantity || quantity === 0)
             quantity = Math.max(0, Math.min(quantity, 2147483647));
+
+        console.log(price);
 
         await queryTransaction<void>(async (connection) => {
             const productSlug = await generateProductSlug(
@@ -453,7 +457,7 @@ async function updateProduct(
                 );
             if (!updateProductResult.affectedRows)
                 throw new ModelError(
-                    `Không tìm thấy sản phẩm '${slug}'.`,
+                    `${staticTexts.productNotFound} (${slug})`,
                     false,
                     400
                 );
@@ -469,7 +473,11 @@ async function updateProduct(
                     categories?.split(',')
                 );
                 if (!isCategoriesValid)
-                    throw new ModelError('Danh mục không hợp lệ.', false, 400);
+                    throw new ModelError(
+                        staticTexts.productInvalidCategory,
+                        false,
+                        400
+                    );
 
                 const insertCategoriesResult = await Promise.all(
                     categories?.split(',').map(async (categorySlug) => {
@@ -486,7 +494,7 @@ async function updateProduct(
                 for (const result in insertCategoriesResult) {
                     if (!result)
                         throw new ModelError(
-                            'Có lỗi xảy ra khi thêm danh mục của sản phẩm (product_categories)',
+                            staticTexts.updateProductError,
                             true,
                             500
                         );
@@ -494,13 +502,15 @@ async function updateProduct(
             }
         });
 
-        return new ModelResponse('Cập nhật sản phẩm thành công.', true, null);
+        return new ModelResponse(staticTexts.updateProductSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -517,7 +527,11 @@ async function updateProduct(
 async function deleteProduct(slug: string) {
     try {
         if (!slug)
-            throw new ModelError(`Thông tin 'slug' bị thiếu.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'slug'`,
+                false,
+                400
+            );
 
         await queryTransaction<void>(async (connection) => {
             const [getProductImageResult] = await connection.execute<
@@ -527,7 +541,7 @@ async function deleteProduct(slug: string) {
             ]);
             if (!getProductImageResult.length)
                 throw new ModelError(
-                    `Không tìm thấy sản phẩm '${slug}'.`,
+                    `${staticTexts.productNotFound} (${slug})`,
                     false,
                     400
                 );
@@ -538,11 +552,7 @@ async function deleteProduct(slug: string) {
                     [slug]
                 );
             if (!deleteProductResult.affectedRows)
-                throw new ModelError(
-                    'Có lỗi xảy ra khi cố gắng xoá sản phẩm khỏi cơ sở dữ liệu.',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.deleteProductError, true, 500);
 
             const associatedImage =
                     getProductImageResult[0]
@@ -554,13 +564,15 @@ async function deleteProduct(slug: string) {
             if (associatedImagePath) await fs.unlink(associatedImagePath);
         });
 
-        return new ModelResponse('Xoá sản phẩm thành công.', true, null);
+        return new ModelResponse(staticTexts.deleteProductSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -579,17 +591,13 @@ async function uploadProductImage(slug: string, image: formidable.File) {
     try {
         if (!slug || !image)
             throw new ModelError(
-                `Thông tin 'slug', 'image' bị thiếu.`,
+                `${staticTexts.invalidParameters}'slug', 'image'`,
                 false,
                 400
             );
 
         if (!image?.mimetype?.includes('image'))
-            throw new ModelError(
-                'Định dạng tệp không phải là hình ảnh.',
-                false,
-                400
-            );
+            throw new ModelError(staticTexts.invalidImageFileType, false, 400);
 
         await queryTransaction<void>(async (connection) => {
             const [getProductFileNameResult] = await connection.execute<
@@ -599,7 +607,7 @@ async function uploadProductImage(slug: string, image: formidable.File) {
             ]);
             if (!getProductFileNameResult.length)
                 throw new ModelError(
-                    `Không tìm thấy sản phẩm '${slug}'.`,
+                    `${staticTexts.productNotFound} (${slug})`,
                     false,
                     400
                 );
@@ -614,7 +622,7 @@ async function uploadProductImage(slug: string, image: formidable.File) {
                 );
             if (!updateImageFileNameResult.affectedRows)
                 throw new ModelError(
-                    `Không tìm thấy sản phẩm '${slug}' khi cập nhật ảnh.`,
+                    `${staticTexts.productNotFound} (${slug})`,
                     false,
                     500
                 );
@@ -646,13 +654,21 @@ async function uploadProductImage(slug: string, image: formidable.File) {
                 );
         });
 
-        return new ModelResponse('Tải hình ảnh thành công.', true, null);
+        return new ModelResponse(
+            staticTexts.uploadImageSuccess,
+            true,
+            null,
+            false,
+            201
+        );
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,

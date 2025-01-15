@@ -7,14 +7,24 @@
 import formidable from 'formidable';
 import { RequestHandler } from 'express';
 
+import type { TypedResponse } from '@root/global';
+import { RawAPIResponse } from '@sources/apis/emart/types';
+import * as APITypes from '@sources/apis/emart/types';
 import model from '@sources/models/product';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Product router controller.
  */
 class ProductController {
     // [GET] /product
-    getProducts: RequestHandler = async (request, response, next) => {
+    getProducts: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.GetProductsResponseData>
+        >,
+        next
+    ) => {
         const query: { page?: string; itemPerPage?: string } = {
                 ...request.query,
             },
@@ -25,19 +35,26 @@ class ProductController {
             page || undefined,
             itemPerPage || undefined
         );
-        if (!productsResult.success)
-            return response.status(productsResult.statusCode).json({
-                message: productsResult.message,
-            });
 
-        return response.status(productsResult.statusCode).json({
-            message: productsResult.message,
-            data: productsResult.data,
-        });
+        return response
+            .status(productsResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.GetProductsResponseData>(
+                    productsResult.message,
+                    productsResult.success,
+                    productsResult.data
+                )
+            );
     };
 
     // [POST] /product
-    createProduct: RequestHandler = async (request, response, next) => {
+    createProduct: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.CreateProductResponseData>
+        >,
+        next
+    ) => {
         try {
             const form = formidable({
                     maxFiles: 1,
@@ -68,37 +85,54 @@ class ProductController {
                 name,
                 categories,
                 desc,
-                parseInt(`${price}`?.replace(/\D/g, '')),
+                parseFloat(`${price}`?.replace(/[^0-9.]/g, '')),
                 parseInt(`${quantity}`?.replace(/\D/g, '')),
                 parseInt(`${priority}`?.replace(/\D/g, '')),
                 image
             );
-            if (!createResult.success)
-                return response
-                    .status(createResult.statusCode)
-                    .json({ message: createResult.message });
 
-            return response.status(201).json({
-                message: createResult.message,
-                data: createResult.data,
-            });
+            return response
+                .status(createResult.statusCode)
+                .json(
+                    new RawAPIResponse<APITypes.CreateProductResponseData>(
+                        createResult.message,
+                        createResult.success,
+                        createResult.data
+                    )
+                );
         } catch (error) {
             console.error(error);
             if (error.httpCode === 413)
-                return response.status(413).json({
-                    message:
-                        'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
-                    data: null,
-                });
+                return response
+                    .status(413)
+                    .json(
+                        new RawAPIResponse<APITypes.CreateProductResponseData>(
+                            staticTexts.fileExceedLimit,
+                            false,
+                            null
+                        )
+                    );
 
             return response
                 .status(500)
-                .json({ message: 'Có lỗi xảy ra.', data: null });
+                .json(
+                    new RawAPIResponse<APITypes.CreateProductResponseData>(
+                        staticTexts.unknownError,
+                        false,
+                        null
+                    )
+                );
         }
     };
 
     // [PUT] /product
-    updateProduct: RequestHandler = async (request, response, next) => {
+    updateProduct: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UpdateProductResponseData>
+        >,
+        next
+    ) => {
         const { slug, name, categories, desc, price, quantity, priority } =
             request.body;
 
@@ -107,39 +141,53 @@ class ProductController {
             name,
             categories,
             desc,
-            parseInt(`${price}`?.replace(/\D/g, '')),
+            parseFloat(`${price}`?.replace(/[^0-9.]/g, '')),
             parseInt(`${quantity}`?.replace(/\D/g, '')),
             parseInt(`${priority}`?.replace(/\D/g, ''))
         );
-        if (!updateProductResult.success)
-            return response.status(updateProductResult.statusCode).json({
-                message: updateProductResult.message,
-            });
 
-        return response.status(updateProductResult.statusCode).json({
-            message: updateProductResult.message,
-            data: updateProductResult.data,
-        });
+        return response
+            .status(updateProductResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.UpdateProductResponseData>(
+                    updateProductResult.message,
+                    updateProductResult.success,
+                    updateProductResult.data
+                )
+            );
     };
 
     // [DELETE] /product
-    deleteProduct: RequestHandler = async (request, response, next) => {
+    deleteProduct: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.DeleteProductResponseData>
+        >,
+        next
+    ) => {
         const { slug } = request.body;
 
         const deleteProductResult = await model.deleteProduct(slug);
-        if (!deleteProductResult.success)
-            return response.status(deleteProductResult.statusCode).json({
-                message: deleteProductResult.message,
-            });
 
-        return response.status(deleteProductResult.statusCode).json({
-            message: deleteProductResult.message,
-            data: deleteProductResult.data,
-        });
+        return response
+            .status(deleteProductResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.DeleteProductResponseData>(
+                    deleteProductResult.message,
+                    deleteProductResult.success,
+                    deleteProductResult.data
+                )
+            );
     };
 
     // [POST] /product/image
-    updateProductImage: RequestHandler = async (request, response, next) => {
+    updateProductImage: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UploadProductImageResponseData>
+        >,
+        next
+    ) => {
         try {
             const form = formidable({
                     maxFiles: 1,
@@ -155,27 +203,38 @@ class ProductController {
                 image = imageArray?.length ? imageArray[0] : null;
 
             const uploadResult = await model.uploadProductImage(slug, image);
-            if (!uploadResult.success)
-                return response
-                    .status(uploadResult.statusCode)
-                    .json({ message: uploadResult.message });
 
-            return response.status(201).json({
-                message: uploadResult.message,
-                data: uploadResult.data,
-            });
+            return response
+                .status(uploadResult.statusCode)
+                .json(
+                    new RawAPIResponse<APITypes.UploadProductImageResponseData>(
+                        uploadResult.message,
+                        uploadResult.success,
+                        uploadResult.data
+                    )
+                );
         } catch (error) {
             console.error(error);
             if (error.httpCode === 413)
-                return response.status(413).json({
-                    message:
-                        'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
-                    data: null,
-                });
+                return response
+                    .status(413)
+                    .json(
+                        new RawAPIResponse<APITypes.CreateProductResponseData>(
+                            staticTexts.fileExceedLimit,
+                            false,
+                            null
+                        )
+                    );
 
             return response
                 .status(500)
-                .json({ message: 'Có lỗi xảy ra.', data: null });
+                .json(
+                    new RawAPIResponse<APITypes.CreateProductResponseData>(
+                        staticTexts.unknownError,
+                        false,
+                        null
+                    )
+                );
         }
     };
 }

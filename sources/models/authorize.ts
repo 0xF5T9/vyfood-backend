@@ -13,6 +13,9 @@ import { query } from '@sources/services/database';
 import { ModelError, ModelResponse } from '@sources/utility/model';
 import cookieOptions from '@sources/global/cookie-options';
 import jwtConfig from '@root/configs/jwt.json';
+import type { TypedResponse } from '@root/global';
+import { RawAPIResponse } from '@sources/apis/emart/types';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Authorize using username and password.
@@ -24,7 +27,7 @@ async function authorize(username: string, password: string) {
     try {
         if (!username || !password)
             throw new ModelError(
-                `Thông tin 'username', 'password' bị thiếu.`,
+                `${staticTexts.invalidParameters}'username', 'password'`,
                 false,
                 400
             );
@@ -38,7 +41,7 @@ async function authorize(username: string, password: string) {
         );
         if (!userInformation.length)
             throw new ModelError(
-                'Tên người dùng hoặc mật khẩu chưa chính xác.',
+                staticTexts.invalidUsernameOrPassword,
                 false,
                 401
             );
@@ -49,7 +52,7 @@ async function authorize(username: string, password: string) {
         );
         if (!compareResult)
             throw new ModelError(
-                'Tên người dùng hoặc mật khẩu chưa chính xác.',
+                staticTexts.invalidUsernameOrPassword,
                 false,
                 401
             );
@@ -68,7 +71,7 @@ async function authorize(username: string, password: string) {
                 { expiresIn: jwtConfig.jwtAccessTokenDuration }
             );
 
-        return new ModelResponse('Xác thực token thành công.', true, {
+        return new ModelResponse(staticTexts.authorizeSuccess, true, {
             refreshToken,
             accessToken,
             user: {
@@ -83,7 +86,9 @@ async function authorize(username: string, password: string) {
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -102,7 +107,7 @@ async function refreshTokens(refreshToken: string, username: string) {
     try {
         if (!refreshToken || !username)
             throw new ModelError(
-                `Thông tin 'refreshToken', 'username' bị thiếu.`,
+                `${staticTexts.invalidParameters}'refreshToken', 'username'`,
                 false,
                 400
             );
@@ -115,7 +120,7 @@ async function refreshTokens(refreshToken: string, username: string) {
             [username]
         );
         if (!userInformation.length)
-            throw new ModelError('Token không hợp lệ.', false, 401);
+            throw new ModelError(staticTexts.invalidToken, false, 401);
 
         jwt.verify(refreshToken, userInformation[0].password);
 
@@ -133,7 +138,7 @@ async function refreshTokens(refreshToken: string, username: string) {
                 { expiresIn: jwtConfig.jwtAccessTokenDuration }
             );
 
-        return new ModelResponse('Xác thực token thành công.', true, {
+        return new ModelResponse(staticTexts.verifyTokenSuccess, true, {
             refreshToken: newRefreshToken,
             accessToken: newAccessToken,
             user: {
@@ -146,7 +151,7 @@ async function refreshTokens(refreshToken: string, username: string) {
     } catch (error) {
         if (error.name === 'JsonWebTokenError')
             return new ModelResponse(
-                'Token không hợp lệ.',
+                staticTexts.invalidToken,
                 false,
                 null,
                 false,
@@ -154,7 +159,7 @@ async function refreshTokens(refreshToken: string, username: string) {
             );
         else if (error.name === 'TokenExpiredError')
             return new ModelResponse(
-                'Token đã hết hạn.',
+                staticTexts.tokenExpired,
                 false,
                 null,
                 false,
@@ -165,7 +170,9 @@ async function refreshTokens(refreshToken: string, username: string) {
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -182,18 +189,22 @@ async function refreshTokens(refreshToken: string, username: string) {
 async function verifyAccessToken(accessToken: string) {
     try {
         if (!accessToken)
-            throw new ModelError(`Token không hợp lệ.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'accessToken'`,
+                false,
+                400
+            );
 
         const decoded: any = jwt.decode(accessToken);
         if (!decoded?.username)
-            throw new ModelError('Token không hợp lệ.', false, 401);
+            throw new ModelError(staticTexts.invalidToken, false, 401);
 
         const currentTime = Math.floor(Date.now() / 1000),
             expirationTime = decoded.exp,
             timeUntilExpiration = expirationTime - currentTime;
         if (timeUntilExpiration < 60)
             return new ModelResponse(
-                'Token đã hết hạn',
+                staticTexts.tokenExpired,
                 false,
                 { username: decoded?.username },
                 false,
@@ -206,7 +217,7 @@ async function verifyAccessToken(accessToken: string) {
         );
         if (!userCredentials.length)
             return new ModelResponse(
-                'Token không hợp lệ.',
+                staticTexts.invalidToken,
                 false,
                 { username: decoded?.username },
                 false,
@@ -219,7 +230,7 @@ async function verifyAccessToken(accessToken: string) {
         ) as any;
 
         return new ModelResponse(
-            'Xác thực token thành công.',
+            staticTexts.verifyTokenSuccess,
             true,
             {
                 username: verifyResult?.username,
@@ -233,7 +244,7 @@ async function verifyAccessToken(accessToken: string) {
     } catch (error) {
         if (error.name === 'JsonWebTokenError')
             return new ModelResponse(
-                'Token không hợp lệ.',
+                staticTexts.invalidToken,
                 false,
                 null,
                 false,
@@ -241,7 +252,7 @@ async function verifyAccessToken(accessToken: string) {
             );
         else if (error.name === 'TokenExpiredError')
             return new ModelResponse(
-                'Token đã hết hạn.',
+                staticTexts.tokenExpired,
                 false,
                 null,
                 false,
@@ -252,7 +263,9 @@ async function verifyAccessToken(accessToken: string) {
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -270,7 +283,7 @@ async function verifyAccessToken(accessToken: string) {
  */
 const authenticateUsername: RequestHandler = async (
     request,
-    response,
+    response: TypedResponse<RawAPIResponse<null>>,
     next
 ) => {
     const { refreshToken, accessToken } = request.cookies;
@@ -281,7 +294,13 @@ const authenticateUsername: RequestHandler = async (
         if (!verifyAccessTokenResult?.data?.username)
             return response
                 .status(verifyAccessTokenResult.statusCode)
-                .json({ message: verifyAccessTokenResult.message });
+                .json(
+                    new RawAPIResponse<null>(
+                        verifyAccessTokenResult.message,
+                        verifyAccessTokenResult.success,
+                        verifyAccessTokenResult.data
+                    )
+                );
 
         const refreshTokensResult = await refreshTokens(
             refreshToken,
@@ -290,7 +309,13 @@ const authenticateUsername: RequestHandler = async (
         if (!refreshTokensResult.success)
             return response
                 .status(refreshTokensResult.statusCode)
-                .json({ message: refreshTokensResult.message });
+                .json(
+                    new RawAPIResponse<null>(
+                        refreshTokensResult.message,
+                        refreshTokensResult.success,
+                        refreshTokensResult.data
+                    )
+                );
         result = refreshTokensResult;
 
         response.cookie(
@@ -311,7 +336,9 @@ const authenticateUsername: RequestHandler = async (
 
     const { username } = request.params;
     if (username?.toLowerCase() !== verifiedUsername?.toLowerCase())
-        return response.status(403).json({ message: 'Token không hợp lệ.' });
+        return response
+            .status(403)
+            .json(new RawAPIResponse<null>(staticTexts.invalidToken, false));
     request.params.username = verifiedUsername;
     next();
 };
@@ -323,7 +350,11 @@ const authenticateUsername: RequestHandler = async (
  * @param next Express middleware next() function.
  * @returns Returns the response object.
  */
-const authenticateAdmin: RequestHandler = async (request, response, next) => {
+const authenticateAdmin: RequestHandler = async (
+    request,
+    response: TypedResponse<RawAPIResponse<null>>,
+    next
+) => {
     const { refreshToken, accessToken } = request.cookies;
 
     const verifyAccessTokenResult = await verifyAccessToken(accessToken);
@@ -332,7 +363,13 @@ const authenticateAdmin: RequestHandler = async (request, response, next) => {
         if (!verifyAccessTokenResult?.data?.username)
             return response
                 .status(verifyAccessTokenResult.statusCode)
-                .json({ message: verifyAccessTokenResult.message });
+                .json(
+                    new RawAPIResponse<null>(
+                        verifyAccessTokenResult.message,
+                        verifyAccessTokenResult.success,
+                        verifyAccessTokenResult.data
+                    )
+                );
 
         const refreshTokensResult = await refreshTokens(
             refreshToken,
@@ -341,7 +378,13 @@ const authenticateAdmin: RequestHandler = async (request, response, next) => {
         if (!refreshTokensResult.success)
             return response
                 .status(refreshTokensResult.statusCode)
-                .json({ message: refreshTokensResult.message });
+                .json(
+                    new RawAPIResponse<null>(
+                        refreshTokensResult.message,
+                        refreshTokensResult.success,
+                        refreshTokensResult.data
+                    )
+                );
         result = refreshTokensResult;
 
         response.cookie(
@@ -360,7 +403,9 @@ const authenticateAdmin: RequestHandler = async (request, response, next) => {
     const verifiedRole = result?.data?.role || result?.data?.user?.role;
 
     if (verifiedRole !== 'admin')
-        return response.status(403).json({ message: 'Token không hợp lệ.' });
+        return response
+            .status(403)
+            .json(new RawAPIResponse<null>(staticTexts.invalidToken, false));
     next();
 };
 

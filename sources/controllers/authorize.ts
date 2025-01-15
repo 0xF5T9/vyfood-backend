@@ -5,16 +5,25 @@
 
 'use strict';
 import { RequestHandler } from 'express';
+
+import type { TypedResponse } from '@root/global';
+import { RawAPIResponse } from '@sources/apis/emart/types';
+import * as APITypes from '@sources/apis/emart/types';
 import cookieOptions from '@sources/global/cookie-options';
 
 import model from '@sources/models/authorize';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Authorize router controller.
  */
 class AuthorizeController {
     // [POST] /authorize
-    authorize: RequestHandler = async (request, response, next) => {
+    authorize: RequestHandler = async (
+        request,
+        response: TypedResponse<RawAPIResponse<APITypes.AuthorizeResponseData>>,
+        next
+    ) => {
         const { username, password } = request.body;
 
         const authorizeResult = await model.authorize(
@@ -24,7 +33,13 @@ class AuthorizeController {
         if (!authorizeResult.success)
             return response
                 .status(authorizeResult.statusCode)
-                .json({ message: authorizeResult.message });
+                .json(
+                    new RawAPIResponse<APITypes.AuthorizeResponseData>(
+                        authorizeResult.message,
+                        authorizeResult.success,
+                        authorizeResult.data
+                    )
+                );
 
         response.cookie(
             'refreshToken',
@@ -37,24 +52,46 @@ class AuthorizeController {
             cookieOptions.authToken
         );
 
-        return response.status(authorizeResult.statusCode).json({
-            message: authorizeResult.message,
-            data: authorizeResult.data.user,
-        });
+        return response
+            .status(authorizeResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.AuthorizeResponseData>(
+                    authorizeResult.message,
+                    authorizeResult.success,
+                    authorizeResult.data.user
+                )
+            );
     };
 
     // [POST] /deauthorize
-    deauthorize: RequestHandler = async (request, response, next) => {
+    deauthorize: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.DeauthorizeResponseData>
+        >,
+        next
+    ) => {
         response.clearCookie('refreshToken', cookieOptions.authToken);
         response.clearCookie('accessToken', cookieOptions.authToken);
 
-        return response.status(200).json({
-            message: 'Đăng xuất thành công.',
-        });
+        return response
+            .status(200)
+            .json(
+                new RawAPIResponse<APITypes.DeauthorizeResponseData>(
+                    staticTexts.deauthorizeSuccess,
+                    true
+                )
+            );
     };
 
     // [POST] /authorize/verifySession
-    verifySession: RequestHandler = async (request, response, next) => {
+    verifySession: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.VerifySessionResponseData>
+        >,
+        next
+    ) => {
         const { refreshToken, accessToken } = request.cookies,
             { forceRefreshToken } = request.query;
 
@@ -65,7 +102,13 @@ class AuthorizeController {
             if (!verifyAccessTokenResult?.data?.username?.toLowerCase())
                 return response
                     .status(verifyAccessTokenResult.statusCode)
-                    .json({ message: verifyAccessTokenResult.message });
+                    .json(
+                        new RawAPIResponse<APITypes.VerifySessionResponseData>(
+                            verifyAccessTokenResult.message,
+                            verifyAccessTokenResult.success,
+                            verifyAccessTokenResult.data
+                        )
+                    );
 
             const refreshTokensResult = await model.refreshTokens(
                 refreshToken,
@@ -74,7 +117,13 @@ class AuthorizeController {
             if (!refreshTokensResult.success)
                 return response
                     .status(refreshTokensResult.statusCode)
-                    .json({ message: refreshTokensResult.message });
+                    .json(
+                        new RawAPIResponse<APITypes.VerifySessionResponseData>(
+                            refreshTokensResult.message,
+                            refreshTokensResult.success,
+                            refreshTokensResult.data
+                        )
+                    );
             result = refreshTokensResult;
 
             response.cookie(
@@ -89,10 +138,15 @@ class AuthorizeController {
             );
         }
 
-        return response.status(result.statusCode).json({
-            message: result.message,
-            data: result?.data?.user || result?.data,
-        });
+        return response
+            .status(result.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.VerifySessionResponseData>(
+                    result.message,
+                    result.success,
+                    result?.data?.user || result?.data
+                )
+            );
     };
 }
 

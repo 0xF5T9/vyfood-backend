@@ -25,6 +25,7 @@ import {
     validatePassword,
 } from '@sources/utility/model';
 import pathGlobal from '@sources/global/path';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Generate user avatar image insertion data.
@@ -78,11 +79,7 @@ async function generateUserAvatarImageInsertData(
         outputFilePath = newPath;
     while (isFileNameAlreadyExist) {
         if (fileNameGenerateAttempt === 3)
-            throw new ModelError(
-                'Có lỗi xảy ra khi cố gắng tạo tên tệp.',
-                true,
-                500
-            );
+            throw new ModelError(staticTexts.fileNameGenerateError, true, 500);
 
         try {
             isFileNameAlreadyExist = await fs.readFile(outputFilePath);
@@ -116,14 +113,10 @@ async function getInfo(username: string) {
             [username]
         );
         if (!getUserInfoResult.length)
-            throw new ModelError(
-                'Không tìm thấy dữ liệu người dùng nào.',
-                true,
-                500
-            );
+            throw new ModelError(staticTexts.getUserInfoError, true, 500);
 
         return new ModelResponse(
-            'Truy xuất dữ liệu người dùng thành công.',
+            staticTexts.getDataSuccess,
             true,
             getUserInfoResult[0]
         );
@@ -132,7 +125,9 @@ async function getInfo(username: string) {
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -163,7 +158,7 @@ async function updateInfo(username: string, fields: UserUpdateFields) {
                 );
                 if (!getCurrentUserInfoResult.length)
                     throw new ModelError(
-                        'Không thể truy xuất thông tin đăng nhập người dùng.',
+                        staticTexts.getUserInfoError,
                         true,
                         500
                     );
@@ -195,23 +190,21 @@ async function updateInfo(username: string, fields: UserUpdateFields) {
                 await transporter.sendMail({
                     from: `no-reply <${process.env.NODEMAILER_USER}>`,
                     to: email,
-                    subject: 'Update Email Address',
-                    html: `<a href="${process.env.NODEMAILER_DOMAIN}/update-email?token=${updateEmailToken}">Nhấn vào liên kết này để cập nhật địa chỉ email của bạn</a>`,
+                    subject: staticTexts.UpdateEmailAddressEmailSubject,
+                    html: `<a href="${process.env.NODEMAILER_DOMAIN}/update-email?token=${updateEmailToken}">${staticTexts.UpdateEmailAddressEmailLinkText}</a>`,
                 });
             }
         });
 
-        return new ModelResponse(
-            'Thông tin tài khoản đã được cập nhật thành công.',
-            true,
-            null
-        );
+        return new ModelResponse(staticTexts.updateUserInfoSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -229,7 +222,7 @@ async function updateEmailAddress(token: string) {
     try {
         if (!token)
             throw new ModelError(
-                'Không có token khôi phục nào được cung cấp.',
+                staticTexts.updateEmailTokenMissing,
                 false,
                 400
             );
@@ -238,7 +231,8 @@ async function updateEmailAddress(token: string) {
             username: string;
             newEmail: string;
         };
-        if (!decoded) throw new ModelError('Token không hợp lệ.', false, 401);
+        if (!decoded)
+            throw new ModelError(staticTexts.invalidToken, false, 401);
 
         await queryTransaction<void>(async (connection) => {
             const [getCurrentUserInfoResult] = await connection.execute<
@@ -248,17 +242,13 @@ async function updateEmailAddress(token: string) {
                 [decoded.username]
             );
             if (!getCurrentUserInfoResult.length)
-                throw new ModelError(
-                    'Không thể truy xuất thông tin đăng nhập người dùng.',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.getUserInfoError, true, 500);
 
             const currentEmail = getCurrentUserInfoResult[0].email,
                 currentPassword = getCurrentUserInfoResult[0].password;
 
             if (!jwt.verify(token, `${currentPassword}${currentEmail}`))
-                throw new ModelError('Token không hợp lệ.', false, 401);
+                throw new ModelError(staticTexts.invalidToken, false, 401);
 
             const [updateEmailResult] =
                 await connection.execute<ResultSetHeader>(
@@ -266,18 +256,10 @@ async function updateEmailAddress(token: string) {
                     [decoded.newEmail, decoded.username]
                 );
             if (!updateEmailResult.affectedRows)
-                throw new ModelError(
-                    'Cập nhật địa chỉ email thất bại.',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.updateEmailError, true, 500);
         });
 
-        return new ModelResponse(
-            'Cập nhật địa chỉ email thành công.',
-            true,
-            null
-        );
+        return new ModelResponse(staticTexts.updateEmailSuccess, true, null);
     } catch (error) {
         if (
             (error?.message as string)
@@ -285,7 +267,7 @@ async function updateEmailAddress(token: string) {
                 .includes('invalid signature')
         )
             return new ModelResponse(
-                'Token không hợp lệ.',
+                staticTexts.invalidToken,
                 false,
                 null,
                 false,
@@ -293,7 +275,7 @@ async function updateEmailAddress(token: string) {
             );
         if ((error?.message as string).toLowerCase().includes('expired'))
             return new ModelResponse(
-                'Yêu cầu cập nhật này đã hết hạn.',
+                staticTexts.expiredRequest,
                 false,
                 null,
                 false,
@@ -304,7 +286,9 @@ async function updateEmailAddress(token: string) {
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -328,14 +312,14 @@ async function updatePassword(
     try {
         if (!username || !currentPassword || !newPassword)
             throw new ModelError(
-                `Thông tin 'username', 'currentPassword', 'newPassword' bị thiếu.`,
+                `${staticTexts.invalidParameters}'username', 'currentPassword', 'newPassword'`,
                 false,
                 400
             );
 
         if (newPassword === currentPassword)
             throw new ModelError(
-                'Mật khẩu mới trùng với mật khẩu cũ.',
+                staticTexts.updatePasswordNewMatchOld,
                 false,
                 400
             );
@@ -350,7 +334,7 @@ async function updatePassword(
             ]);
             if (!getCredentialResult.length)
                 throw new ModelError(
-                    'Mật khẩu hiện tại không chính xác.',
+                    staticTexts.updatePasswordIncorrectOldPassword,
                     false,
                     401
                 );
@@ -361,7 +345,7 @@ async function updatePassword(
             );
             if (!compareResult)
                 throw new ModelError(
-                    'Mật khẩu hiện tại không chính xác.',
+                    staticTexts.updatePasswordIncorrectOldPassword,
                     false,
                     400
                 );
@@ -374,10 +358,14 @@ async function updatePassword(
                     [hashedPassword, username]
                 );
             if (!updateCredentialResult.affectedRows)
-                throw new ModelError('Cập nhật mật khẩu thất bại.', true, 500);
+                throw new ModelError(
+                    staticTexts.updatePasswordError,
+                    true,
+                    500
+                );
         });
 
-        return new ModelResponse('Cập nhật mật khẩu thành công.', true, null);
+        return new ModelResponse(staticTexts.updatePasswordSuccess, true, null);
     } catch (error) {
         if (
             (error?.message as string)
@@ -385,7 +373,7 @@ async function updatePassword(
                 .includes('invalid signature')
         )
             return new ModelResponse(
-                'Token không hợp lệ.',
+                staticTexts.invalidToken,
                 false,
                 null,
                 false,
@@ -393,7 +381,7 @@ async function updatePassword(
             );
         if ((error?.message as string).toLowerCase().includes('expired'))
             return new ModelResponse(
-                'Yêu cầu cập nhật này đã hết hạn.',
+                staticTexts.expiredRequest,
                 false,
                 null,
                 false,
@@ -404,7 +392,9 @@ async function updatePassword(
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -423,7 +413,7 @@ async function deleteUser(username: string, currentPassword: string) {
     try {
         if (!username || !currentPassword)
             throw new ModelError(
-                `Thông tin 'username', 'currentPassword', 'newPassword' bị thiếu.`,
+                `${staticTexts.invalidParameters}'username', 'currentPassword', 'newPassword'`,
                 false,
                 400
             );
@@ -435,11 +425,7 @@ async function deleteUser(username: string, currentPassword: string) {
                 username,
             ]);
             if (!getCredentialResult?.length)
-                throw new ModelError(
-                    `Không tìm thấy thông tin credentials của người dùng.`,
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.getUserInfoError, true, 500);
 
             const [getAvatarImageResult] = await connection.execute<
                 Array<RowDataPacket & { avatarFileName: string }>
@@ -447,18 +433,18 @@ async function deleteUser(username: string, currentPassword: string) {
                 username,
             ]);
             if (!getAvatarImageResult.length)
-                throw new ModelError(
-                    `Không tìm thấy người dùng '${username}'.`,
-                    false,
-                    400
-                );
+                throw new ModelError(staticTexts.getUserInfoError, false, 400);
 
             const compareResult = await bcrypt.compare(
                 currentPassword,
                 getCredentialResult[0]?.password
             );
             if (!compareResult)
-                throw new ModelError(`Mật khẩu không chính xác.`, false, 400);
+                throw new ModelError(
+                    staticTexts.deleteUserIncorrectPassword,
+                    false,
+                    400
+                );
 
             const [deleteCredentialResult] =
                     await connection.execute<ResultSetHeader>(
@@ -473,11 +459,7 @@ async function deleteUser(username: string, currentPassword: string) {
                 !deleteCredentialResult?.affectedRows ||
                 !deleteUserResult?.affectedRows
             )
-                throw new ModelError(
-                    `Có lỗi xảy ra khi xoá thông tin người dùng`,
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.deleteUserError, true, 500);
 
             const associatedImage =
                     getAvatarImageResult[0]
@@ -490,21 +472,20 @@ async function deleteUser(username: string, currentPassword: string) {
                 try {
                     await fs.unlink(associatedImagePath);
                 } catch (error) {
-                    console.error(
-                        'Có lỗi xảy ra khi xoá hình ảnh avatar của người dùng.\n',
-                        error
-                    );
+                    console.error(`${staticTexts.deleteUserError}\n`, error);
                 }
             }
         });
 
-        return new ModelResponse('Xoá tài khoản thành công.', true, null);
+        return new ModelResponse(staticTexts.deleteUserSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -526,17 +507,13 @@ async function uploadUserAvatar(
     try {
         if (!username || !avatarImage)
             throw new ModelError(
-                `Thông tin 'username', 'avatarImage' bị thiếu.`,
+                `${staticTexts.invalidParameters}'username', 'avatarImage'`,
                 false,
                 400
             );
 
         if (!avatarImage?.mimetype?.includes('image'))
-            throw new ModelError(
-                'Định dạng tệp không phải là hình ảnh.',
-                false,
-                400
-            );
+            throw new ModelError(staticTexts.invalidImageFileType, false, 400);
 
         await queryTransaction<void>(async (connection) => {
             const [getUserAvatarFileNameResult] = await connection.execute<
@@ -546,7 +523,7 @@ async function uploadUserAvatar(
             ]);
             if (!getUserAvatarFileNameResult.length)
                 throw new ModelError(
-                    `Không tìm thấy người dùng '${username}'.`,
+                    `${staticTexts.userNotFound} (${username})`,
                     false,
                     400
                 );
@@ -562,7 +539,7 @@ async function uploadUserAvatar(
                 );
             if (!updateImageFileNameResult.affectedRows)
                 throw new ModelError(
-                    `Không tìm thấy người dùng '${username}' khi cập nhật ảnh avatar.`,
+                    `${staticTexts.userNotFound} (${username})`,
                     false,
                     500
                 );
@@ -593,13 +570,21 @@ async function uploadUserAvatar(
                 );
         });
 
-        return new ModelResponse('Tải hình ảnh thành công.', true, null);
+        return new ModelResponse(
+            staticTexts.uploadImageSuccess,
+            true,
+            null,
+            false,
+            201
+        );
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -663,13 +648,15 @@ async function getUsersAsAdmin(page: number = 1, itemPerPage: number = 12) {
             };
         });
 
-        return new ModelResponse('Truy xuất dữ liệu thành công.', true, result);
+        return new ModelResponse(staticTexts.getDataSuccess, true, result);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -697,17 +684,13 @@ async function createUserAsAdmin(
     try {
         if (!email || !username || !password || !role)
             throw new ModelError(
-                `Thông tin 'email', 'username', 'password', 'role' bị thiếu.`,
+                `${staticTexts.invalidParameters}'email', 'username', 'password', 'role'`,
                 false,
                 400
             );
 
         if (avatarImage && !avatarImage?.mimetype?.includes('image'))
-            throw new ModelError(
-                'Định dạng tệp không phải là hình ảnh.',
-                false,
-                400
-            );
+            throw new ModelError(staticTexts.invalidImageFileType, false, 400);
 
         await queryTransaction<void>(async (connection) => {
             if (
@@ -716,7 +699,7 @@ async function createUserAsAdmin(
                 !(await validateEmail(connection, email, true))
             )
                 throw new ModelError(
-                    'Thông tin đăng ký không hợp lệ.',
+                    staticTexts.invalidRegisterInformation,
                     false,
                     400
                 );
@@ -731,11 +714,7 @@ async function createUserAsAdmin(
                     [username, email, role, imageInsertData?.fileName || null]
                 );
             if (!insertUserResult.affectedRows)
-                throw new ModelError(
-                    'Cập nhật người dùng vào cơ sở dữ liệu thất bại (users).',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.registerError, true, 500);
 
             const [insertCredentialsResult] =
                 await connection.execute<ResultSetHeader>(
@@ -743,11 +722,7 @@ async function createUserAsAdmin(
                     [hashedPassword, username]
                 );
             if (!insertCredentialsResult.affectedRows)
-                throw new ModelError(
-                    'Cập nhật người dùng vào cơ sở dữ liệu thất bại (credentials).',
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.registerError, true, 500);
 
             if (imageInsertData)
                 await fs.writeFile(
@@ -756,13 +731,21 @@ async function createUserAsAdmin(
                 );
         });
 
-        return new ModelResponse('Tạo người dùng thành công.', true, null);
+        return new ModelResponse(
+            staticTexts.registerSuccess,
+            true,
+            null,
+            false,
+            201
+        );
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -789,7 +772,7 @@ async function updateUserAsAdmin(
     try {
         if (!targetUsername)
             throw new ModelError(
-                `Thông tin 'targetUsername' bị thiếu.`,
+                `${staticTexts.invalidParameters}'targetUsername'`,
                 false,
                 400
             );
@@ -809,7 +792,7 @@ async function updateUserAsAdmin(
             );
             if (!getCurrentUserInfoResult.length)
                 throw new ModelError(
-                    `Không tìm thấy người dùng '${targetUsername}'`,
+                    `${staticTexts.userNotFound} (${targetUsername})`,
                     false,
                     400
                 );
@@ -821,7 +804,7 @@ async function updateUserAsAdmin(
             if (email && email !== currentEmail) {
                 if (!(await validateEmail(connection, email, false)))
                     throw new ModelError(
-                        'Thông tin cập nhật không hợp lệ.',
+                        staticTexts.updateUserAsAdminError,
                         false,
                         400
                     );
@@ -833,7 +816,7 @@ async function updateUserAsAdmin(
                 );
                 if (checkDuplicateResult[0].count)
                     throw new ModelError(
-                        'Địa chỉ email này đã tồn tại.',
+                        staticTexts.emailAlreadyExist,
                         false,
                         400
                     );
@@ -842,7 +825,7 @@ async function updateUserAsAdmin(
             if (username && username !== currentUsername) {
                 if (!(await validateUsername(connection, username, false)))
                     throw new ModelError(
-                        'Thông tin cập nhật không hợp lệ.',
+                        staticTexts.updateUserAsAdminError,
                         false,
                         400
                     );
@@ -854,7 +837,7 @@ async function updateUserAsAdmin(
                 );
                 if (checkDuplicateResult[0].count)
                     throw new ModelError(
-                        'Tên người dùng này đã tồn tại.',
+                        staticTexts.usernameAlreadyExist,
                         false,
                         400
                     );
@@ -872,7 +855,7 @@ async function updateUserAsAdmin(
                 );
             if (!updateUserResult.affectedRows)
                 throw new ModelError(
-                    'Cập nhật người dùng thất bại (users).',
+                    staticTexts.updateUserAsAdminError,
                     true,
                     500
                 );
@@ -880,7 +863,7 @@ async function updateUserAsAdmin(
             if (password) {
                 if (!validatePassword(password))
                     throw new ModelError(
-                        'Thông tin cập nhật không hợp lệ.',
+                        staticTexts.updateUserAsAdminError,
                         false,
                         400
                     );
@@ -894,20 +877,26 @@ async function updateUserAsAdmin(
                     );
                 if (!updateCredentialsResult.affectedRows)
                     throw new ModelError(
-                        'Cập nhật người dùng thất bại (credentials).',
+                        staticTexts.updateUserAsAdminError,
                         true,
                         500
                     );
             }
         });
 
-        return new ModelResponse('Cập nhật người dùng thành công.', true, null);
+        return new ModelResponse(
+            staticTexts.updateUserAsAdminSuccess,
+            true,
+            null
+        );
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -924,7 +913,11 @@ async function updateUserAsAdmin(
 async function deleteUserAsAdmin(username: string) {
     try {
         if (!username)
-            throw new ModelError(`Thông tin 'username' bị thiếu.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'username'`,
+                false,
+                400
+            );
 
         await queryTransaction<void>(async (connection) => {
             const [getAvatarImageResult] = await connection.execute<
@@ -938,7 +931,7 @@ async function deleteUserAsAdmin(username: string) {
             ]);
             if (!getAvatarImageResult.length)
                 throw new ModelError(
-                    `Không tìm thấy người dùng '${username}'.`,
+                    `${staticTexts.userNotFound} (${username})`,
                     false,
                     400
                 );
@@ -956,11 +949,7 @@ async function deleteUserAsAdmin(username: string) {
                 !deleteCredentialResult?.affectedRows ||
                 !deleteUserResult?.affectedRows
             )
-                throw new ModelError(
-                    `Có lỗi xảy ra khi xoá thông tin người dùng`,
-                    true,
-                    500
-                );
+                throw new ModelError(staticTexts.deleteUserError, true, 500);
 
             const associatedImage =
                     getAvatarImageResult[0]
@@ -973,21 +962,20 @@ async function deleteUserAsAdmin(username: string) {
                 try {
                     await fs.unlink(associatedImagePath);
                 } catch (error) {
-                    console.error(
-                        'Có lỗi xảy ra khi xoá hình ảnh avatar của người dùng.\n',
-                        error
-                    );
+                    console.error(`${staticTexts.deleteUserError}\n`, error);
                 }
             }
         });
 
-        return new ModelResponse('Xoá người dùng thành công.', true, null);
+        return new ModelResponse(staticTexts.deleteUserSuccess, true, null);
     } catch (error) {
         console.error(error);
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,

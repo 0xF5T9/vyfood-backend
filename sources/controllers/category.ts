@@ -7,14 +7,24 @@
 import formidable from 'formidable';
 import { RequestHandler } from 'express';
 
+import type { TypedResponse } from '@root/global';
+import { RawAPIResponse } from '@sources/apis/emart/types';
+import * as APITypes from '@sources/apis/emart/types';
 import model from '@sources/models/category';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Category router controller.
  */
 class CategoryController {
     // [GET] /category
-    getCategories: RequestHandler = async (request, response, next) => {
+    getCategories: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.GetCategoriesResponseData>
+        >,
+        next
+    ) => {
         const query: { page?: string; itemPerPage?: string } = {
                 ...request.query,
             },
@@ -25,33 +35,47 @@ class CategoryController {
             page || undefined,
             itemPerPage || undefined
         );
-        if (!categoriesResult.success)
-            return response.status(categoriesResult.statusCode).json({
-                message: categoriesResult.message,
-            });
 
-        return response.status(categoriesResult.statusCode).json({
-            message: categoriesResult.message,
-            data: categoriesResult.data,
-        });
+        return response
+            .status(categoriesResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.GetCategoriesResponseData>(
+                    categoriesResult.message,
+                    categoriesResult.success,
+                    categoriesResult.data
+                )
+            );
     };
 
     // [GET] /categoriesCount
-    getCategoriesCount: RequestHandler = async (request, response, next) => {
+    getCategoriesCount: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.GetCategoriesCountResponseData>
+        >,
+        next
+    ) => {
         const categoriesCountResult = await model.getCategoriesCount();
-        if (!categoriesCountResult.success)
-            return response.status(categoriesCountResult.statusCode).json({
-                message: categoriesCountResult.message,
-            });
 
-        return response.status(categoriesCountResult.statusCode).json({
-            message: categoriesCountResult.message,
-            data: categoriesCountResult.data,
-        });
+        return response
+            .status(categoriesCountResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.GetCategoriesCountResponseData>(
+                    categoriesCountResult.message,
+                    categoriesCountResult.success,
+                    categoriesCountResult.data
+                )
+            );
     };
 
     // [POST] /category
-    createCategory: RequestHandler = async (request, response, next) => {
+    createCategory: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.CreateCategoryResponseData>
+        >,
+        next
+    ) => {
         try {
             const form = formidable({
                     maxFiles: 1,
@@ -76,32 +100,49 @@ class CategoryController {
                 parseInt(`${priority}`?.replace(/\D/g, '')),
                 image
             );
-            if (!createResult.success)
-                return response
-                    .status(createResult.statusCode)
-                    .json({ message: createResult.message });
 
-            return response.status(201).json({
-                message: createResult.message,
-                data: createResult.data,
-            });
+            return response
+                .status(createResult.statusCode)
+                .json(
+                    new RawAPIResponse<APITypes.CreateCategoryResponseData>(
+                        createResult.message,
+                        createResult.success,
+                        createResult.data
+                    )
+                );
         } catch (error) {
             console.error(error);
             if (error.httpCode === 413)
-                return response.status(413).json({
-                    message:
-                        'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
-                    data: null,
-                });
+                return response
+                    .status(413)
+                    .json(
+                        new RawAPIResponse<APITypes.CreateCategoryResponseData>(
+                            staticTexts.fileExceedLimit,
+                            false,
+                            null
+                        )
+                    );
 
             return response
                 .status(500)
-                .json({ message: 'Có lỗi xảy ra.', data: null });
+                .json(
+                    new RawAPIResponse<APITypes.CreateCategoryResponseData>(
+                        staticTexts.unknownError,
+                        false,
+                        null
+                    )
+                );
         }
     };
 
     // [PUT] /category
-    updateCategory: RequestHandler = async (request, response, next) => {
+    updateCategory: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UpdateCategoryResponseData>
+        >,
+        next
+    ) => {
         const { slug, name, desc, priority } = request.body;
 
         const updateCategoryResult = await model.updateCategory(
@@ -110,35 +151,49 @@ class CategoryController {
             desc,
             parseInt(`${priority}`?.replace(/\D/g, ''))
         );
-        if (!updateCategoryResult.success)
-            return response.status(updateCategoryResult.statusCode).json({
-                message: updateCategoryResult.message,
-            });
 
-        return response.status(updateCategoryResult.statusCode).json({
-            message: updateCategoryResult.message,
-            data: updateCategoryResult.data,
-        });
+        return response
+            .status(updateCategoryResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.UpdateCategoryResponseData>(
+                    updateCategoryResult.message,
+                    updateCategoryResult.success,
+                    updateCategoryResult.data
+                )
+            );
     };
 
     // [DELETE] /category
-    deleteCategory: RequestHandler = async (request, response, next) => {
+    deleteCategory: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.DeleteCategoryResponseData>
+        >,
+        next
+    ) => {
         const { slug } = request.body;
 
         const deleteCategoryResult = await model.deleteCategory(slug);
-        if (!deleteCategoryResult.success)
-            return response.status(deleteCategoryResult.statusCode).json({
-                message: deleteCategoryResult.message,
-            });
 
-        return response.status(deleteCategoryResult.statusCode).json({
-            message: deleteCategoryResult.message,
-            data: deleteCategoryResult.data,
-        });
+        return response
+            .status(deleteCategoryResult.statusCode)
+            .json(
+                new RawAPIResponse<APITypes.DeleteCategoryResponseData>(
+                    deleteCategoryResult.message,
+                    deleteCategoryResult.success,
+                    deleteCategoryResult.data
+                )
+            );
     };
 
     // [POST] /category/image
-    updateCategoryImage: RequestHandler = async (request, response, next) => {
+    updateCategoryImage: RequestHandler = async (
+        request,
+        response: TypedResponse<
+            RawAPIResponse<APITypes.UploadCategoryImageResponseData>
+        >,
+        next
+    ) => {
         try {
             const form = formidable({
                     maxFiles: 1,
@@ -154,27 +209,38 @@ class CategoryController {
                 image = imageArray?.length ? imageArray[0] : null;
 
             const uploadResult = await model.uploadCategoryImage(slug, image);
-            if (!uploadResult.success)
-                return response
-                    .status(uploadResult.statusCode)
-                    .json({ message: uploadResult.message });
 
-            return response.status(201).json({
-                message: uploadResult.message,
-                data: uploadResult.data,
-            });
+            return response
+                .status(201)
+                .json(
+                    new RawAPIResponse<APITypes.UploadCategoryImageResponseData>(
+                        uploadResult.message,
+                        uploadResult.success,
+                        uploadResult.data
+                    )
+                );
         } catch (error) {
             console.error(error);
             if (error.httpCode === 413)
-                return response.status(413).json({
-                    message:
-                        'Số lượng tệp hoặc kích thước tệp vượt quá giới hạn.',
-                    data: null,
-                });
+                return response
+                    .status(413)
+                    .json(
+                        new RawAPIResponse<APITypes.UploadCategoryImageResponseData>(
+                            staticTexts.fileExceedLimit,
+                            false,
+                            null
+                        )
+                    );
 
             return response
                 .status(500)
-                .json({ message: 'Có lỗi xảy ra.', data: null });
+                .json(
+                    new RawAPIResponse<APITypes.UploadCategoryImageResponseData>(
+                        staticTexts.unknownError,
+                        false,
+                        null
+                    )
+                );
         }
     };
 }

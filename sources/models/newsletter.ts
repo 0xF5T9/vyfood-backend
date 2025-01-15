@@ -15,6 +15,7 @@ import {
     ModelResponse,
     validateEmail,
 } from '@sources/utility/model';
+import staticTexts from '@sources/apis/emart/static-texts';
 
 /**
  * Send a subscrible newsletter confirmation mail.
@@ -24,7 +25,11 @@ import {
 async function subscribeNewsletter(email: string) {
     try {
         if (!email)
-            throw new ModelError(`Thông tin 'email' bị thiếu.`, false, 400);
+            throw new ModelError(
+                `${staticTexts.invalidParameters}'email'`,
+                false,
+                400
+            );
 
         await queryTransaction<void>(async (connection) => {
             await validateEmail(connection, email, false);
@@ -59,13 +64,13 @@ async function subscribeNewsletter(email: string) {
             await transporter.sendMail({
                 from: `no-reply <${process.env.NODEMAILER_USER}>`,
                 to: email,
-                subject: 'Subscrible Newsletter Confirmation',
-                html: `<a href="${process.env.NODEMAILER_DOMAIN}/newsletter-subscribe?token=${newsletterToken}">Nhấn vào liên kết này để xác nhận yêu cầu nhận tin</a>`,
+                subject: staticTexts.subscribeNewsletterEmailSubject,
+                html: `<a href="${process.env.NODEMAILER_DOMAIN}/newsletter-subscribe?token=${newsletterToken}">${staticTexts.subscribeNewsletterEmailLinkText}</a>`,
             });
         });
 
         return new ModelResponse(
-            'Kiểm tra email của bạn để xác nhận yêu cầu nhé.',
+            staticTexts.subscribeNewsletterSuccess,
             true,
             null
         );
@@ -74,7 +79,9 @@ async function subscribeNewsletter(email: string) {
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
@@ -92,7 +99,7 @@ async function subscribeNewsletterConfirmation(newsletterToken: string) {
     try {
         if (!newsletterToken)
             throw new ModelError(
-                `Thông tin 'newsletterToken' bị thiếu.`,
+                `${staticTexts.invalidParameters}'newsletterToken'`,
                 false,
                 400
             );
@@ -121,21 +128,21 @@ async function subscribeNewsletterConfirmation(newsletterToken: string) {
                 );
             if (!insertSubscriberResult.affectedRows)
                 throw new ModelError(
-                    'Có lỗi xảy ra khi thêm dữ liệu. (newsletter_subscribers)',
+                    staticTexts.subscribeNewsletterConfirmationError,
                     true,
                     500
                 );
         });
 
         return new ModelResponse(
-            'Bạn đã đăng ký nhận bản tin thành công.',
+            staticTexts.subscribeNewsletterConfirmationSuccess,
             true,
             null
         );
     } catch (error) {
         if (error.name === 'JsonWebTokenError')
             return new ModelResponse(
-                'Yêu cầu xác nhận này không hợp lệ.',
+                staticTexts.invalidRequest,
                 false,
                 null,
                 false,
@@ -143,7 +150,7 @@ async function subscribeNewsletterConfirmation(newsletterToken: string) {
             );
         else if (error.name === 'TokenExpiredError')
             return new ModelResponse(
-                'Yêu cầu xác nhận này đã hết hạn.',
+                staticTexts.expiredRequest,
                 false,
                 null,
                 false,
@@ -154,7 +161,9 @@ async function subscribeNewsletterConfirmation(newsletterToken: string) {
         if (error.isServerError === undefined) error.isServerError = true;
 
         return new ModelResponse(
-            error.isServerError === false ? error.message : 'Có lỗi xảy ra.',
+            error.isServerError === false
+                ? error.message
+                : staticTexts.unknownError,
             false,
             null,
             error.isServerError,
